@@ -1,0 +1,401 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+    background: #1a1a2e;
+    color: #eee;
+    height: 100vh;
+    overflow: hidden;
+}
+
+#app {
+    height: 100%;
+}
+
+/* Modal Styles */
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.modal.small .modal-content {
+    width: 350px;
+}
+
+.modal-content {
+    background: #2a2a4a;
+    padding: 30px;
+    border-radius: 10px;
+    width: 450px;
+    max-width: 90%;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+}
+
+.modal-content h2,
+.modal-content h3 {
+    margin-bottom: 20px;
+    color: #fff;
+}
+
+/* Form Styles */
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    color: #aaa;
+    font-size: 14px;
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #444;
+    border-radius: 6px;
+    background: #1a1a2e;
+    color: #fff;
+    font-size: 14px;
+}
+
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+    outline: none;
+    border-color: #4a9eff;
+}
+
+.form-group textarea {
+    font-family: 'Monaco', 'Menlo', monospace;
+    font-size: 12px;
+    resize: vertical;
+}
+
+.file-upload {
+    margin-top: 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: #aaa;
+    font-size: 13px;
+}
+
+.file-upload input[type="file"] {
+    width: auto;
+}
+
+.form-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 25px;
+}
+
+/* Button Styles */
+.btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+    background: #444;
+    color: #fff;
+}
+
+.btn:hover {
+    background: #555;
+}
+
+.btn-primary {
+    background: #4a9eff;
+    color: #fff;
+}
+
+.btn-primary:hover {
+    background: #3a8eef;
+}
+
+.btn-danger {
+    background: #e74c3c;
+    color: #fff;
+}
+
+.btn-danger:hover {
+    background: #c0392b;
+}
+
+/* Main Container */
+.main-container {
+    display: flex;
+    height: 100%;
+}
+
+/* SFTP Panel */
+.sftp-panel {
+    width: 350px;
+    background: #2a2a4a;
+    border-right: 1px solid #444;
+    display: flex;
+    flex-direction: column;
+}
+
+.panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px;
+    background: #1a1a2e;
+    border-bottom: 1px solid #444;
+}
+
+.panel-header h3 {
+    font-size: 14px;
+    color: #fff;
+}
+
+.panel-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.panel-actions button {
+    background: #444;
+    border: none;
+    color: #fff;
+    padding: 6px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background 0.2s;
+}
+
+.panel-actions button:hover {
+    background: #555;
+}
+
+/* File Path Bar */
+.file-path {
+    display: flex;
+    gap: 8px;
+    padding: 10px 15px;
+    background: #222240;
+    border-bottom: 1px solid #444;
+}
+
+.file-path button {
+    background: #444;
+    border: none;
+    color: #fff;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.file-path button:hover {
+    background: #555;
+}
+
+.path-input {
+    flex: 1;
+    padding: 6px 10px;
+    border: 1px solid #444;
+    border-radius: 4px;
+    background: #1a1a2e;
+    color: #fff;
+    font-size: 13px;
+}
+
+/* File List */
+.file-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px;
+}
+
+.file-item {
+    display: grid;
+    grid-template-columns: 30px 1fr 70px 80px;
+    align-items: center;
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.2s;
+    gap: 8px;
+}
+
+.file-item.header {
+    background: #1a1a2e;
+    font-weight: 600;
+    font-size: 12px;
+    color: #888;
+    cursor: default;
+}
+
+.file-item.header:hover {
+    background: #1a1a2e;
+}
+
+.file-actions-header {
+    font-size: 12px;
+    color: #666;
+    text-align: center;
+}
+
+.file-item:hover {
+    background: #3a3a5a;
+}
+
+.file-item.is-dir {
+    background: #2a2a4a;
+}
+
+.file-item.is-dir:hover {
+    background: #3a3a5a;
+}
+
+.file-icon {
+    font-size: 18px;
+    width: 30px;
+    text-align: center;
+}
+
+.file-name {
+    font-size: 13px;
+    color: #ddd;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.file-size {
+    font-size: 12px;
+    color: #888;
+    text-align: right;
+}
+
+.file-actions {
+    display: flex;
+    gap: 4px;
+    justify-content: center;
+}
+
+.file-actions button {
+    background: #444;
+    border: none;
+    color: #fff;
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background 0.2s;
+}
+
+.file-actions button:hover {
+    background: #555;
+}
+
+/* Status Bar */
+.status-bar {
+    padding: 10px 15px;
+    background: #222240;
+    border-top: 1px solid #444;
+    font-size: 13px;
+    color: #4a9eff;
+}
+
+/* Terminal Panel */
+.terminal-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: #0d0d1a;
+}
+
+#terminal-container {
+    flex: 1;
+    overflow: hidden;
+    padding: 10px;
+}
+
+/* Scrollbar Styles */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #1a1a2e;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #444;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #555;
+}
+
+/* Loading Spinner */
+.loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px;
+}
+
+.spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid #444;
+    border-top-color: #4a9eff;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Error Message */
+.error-message {
+    background: #e74c3c20;
+    border: 1px solid #e74c3c;
+    color: #e74c3c;
+    padding: 15px;
+    border-radius: 6px;
+    margin: 15px 0;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .main-container {
+        flex-direction: column;
+    }
+
+    .sftp-panel {
+        width: 100%;
+        height: 40%;
+        border-right: none;
+        border-bottom: 1px solid #444;
+    }
+
+    .terminal-panel {
+        height: 60%;
+    }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "web-ssh",
+  "version": "1.0.0",
+  "description": "一个基于 Go 语言的网页版 SSH 堡垒机应用，支持 Web 终端和 SFTP 文件管理。",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "tailwindcss": "^3.4.1"
+  }
+}

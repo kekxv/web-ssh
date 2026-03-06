@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web SSH - 堡垒机</title>
+    <link rel="stylesheet" href="/vendor/xterm.css">
+    <link rel="stylesheet" href="/vendor/tailwind.css">
+    <style>
+        body { background: #0f172a; }
+        .terminal-container { height: calc(100vh - 48px); }
+        .xterm-viewport { border-radius: 8px; }
+        /* 自定义滚动条 */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #1e293b; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+    </style>
+</head>
+<body class="h-screen overflow-hidden">
+    <div id="app" class="h-full">
+        <!-- 连接配置模态框 -->
+        <div v-if="!connected" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
+            <div class="bg-slate-800 rounded-2xl p-8 w-full max-w-md mx-4 shadow-2xl border border-slate-700">
+                <h2 class="text-2xl font-bold text-white mb-6 flex items-center gap-2">
+                    <span class="text-3xl">🔐</span> SSH 连接配置
+                </h2>
+                <form @submit.prevent="connect">
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm text-slate-400 mb-2">连接模式</label>
+                            <select v-model="connectionMode"
+                                    class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                                <option value="ssh">🖥️ SSH 远程连接</option>
+                                <option value="local">💻 本机 Bash</option>
+                            </select>
+                        </div>
+
+                        <template v-if="connectionMode === 'ssh'">
+                            <div class="grid grid-cols-3 gap-3">
+                                <div class="col-span-2">
+                                    <label class="block text-sm text-slate-400 mb-2">主机地址</label>
+                                    <input type="text" v-model="config.host" placeholder="192.168.1.100" required
+                                           class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500">
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-slate-400 mb-2">端口</label>
+                                    <input type="number" v-model="config.port" value="22" required
+                                           class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500">
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-sm text-slate-400 mb-2">用户名</label>
+                                <input type="text" v-model="config.username" placeholder="root" required
+                                       class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500">
+                            </div>
+                            <div>
+                                <label class="block text-sm text-slate-400 mb-2">认证方式</label>
+                                <select v-model="authMethod"
+                                        class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500">
+                                    <option value="password">🔑 密码认证</option>
+                                    <option value="key">📜 私钥认证</option>
+                                </select>
+                            </div>
+                            <div v-if="authMethod === 'password'">
+                                <label class="block text-sm text-slate-400 mb-2">密码</label>
+                                <input type="password" v-model="config.password" placeholder="请输入密码"
+                                       class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500">
+                            </div>
+                            <template v-if="authMethod === 'key'">
+                                <div>
+                                    <label class="block text-sm text-slate-400 mb-2">私钥内容</label>
+                                    <textarea v-model="config.privateKey"
+                                              placeholder="-----BEGIN RSA PRIVATE KEY-----..."
+                                              rows="6"
+                                              class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white font-mono text-sm focus:outline-none focus:border-blue-500 resize-none"></textarea>
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-slate-400 mb-2">私钥密码 (Passphrase)</label>
+                                    <input type="password" v-model="config.passphrase" placeholder="私钥加密密码（如有）"
+                                           class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500">
+                                </div>
+                                <div class="flex items-center gap-3 text-slate-400 text-sm">
+                                    <input type="file" @change="handleKeyFileUpload"
+                                           class="flex-1 text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-blue-600 file:text-white hover:file:bg-blue-700 cursor-pointer">
+                                </div>
+                            </template>
+                        </template>
+                    </div>
+
+                    <div class="mt-6">
+                        <button type="submit"
+                                class="w-full bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white font-semibold py-3 px-6 rounded-lg transition-all duration-200 shadow-lg hover:shadow-blue-500/25">
+                            🚀 立即连接
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- 主界面 -->
+        <div v-show="connected" class="h-full flex">
+            <!-- 左侧 SFTP 面板 -->
+            <div v-if="connectionMode === 'ssh'" class="w-96 bg-slate-800 border-r border-slate-700 flex flex-col">
+                <div class="p-4 bg-slate-900 border-b border-slate-700">
+                    <h3 class="text-lg font-semibold text-white flex items-center gap-2">
+                        <span>📂</span> SFTP 文件管理
+                    </h3>
+                </div>
+
+                <!-- 工具栏 -->
+                <div class="flex items-center gap-2 p-3 bg-slate-800/50 border-b border-slate-700">
+                    <button @click="goHome" title="回到首页"
+                            class="p-2 rounded-lg hover:bg-slate-700 transition-colors text-slate-400 hover:text-white"
+                            title="回到首页">🏠</button>
+                    <button @click="navigateUp" title="上级目录"
+                            class="p-2 rounded-lg hover:bg-slate-700 transition-colors text-slate-400 hover:text-white">⬆️</button>
+                    <button @click="refreshFileList" title="刷新"
+                            class="p-2 rounded-lg hover:bg-slate-700 transition-colors text-slate-400 hover:text-white">🔄</button>
+                    <div class="flex-1"></div>
+                    <button @click="showMkdirModal = true" title="新建文件夹"
+                            class="px-3 py-2 rounded-lg bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 transition-colors text-sm font-medium">➕ 新建</button>
+                    <button @click="triggerUpload" title="上传文件"
+                            class="px-3 py-2 rounded-lg bg-green-600/20 text-green-400 hover:bg-green-600/30 transition-colors text-sm font-medium">📤 上传</button>
+                    <input type="file" ref="fileInput" @change="handleFileUpload" style="display:none">
+                </div>
+
+                <!-- 路径栏 -->
+                <div class="flex items-center gap-2 p-3 bg-slate-900/50 border-y border-slate-700">
+                    <span class="text-slate-500 text-sm">📍</span>
+                    <input type="text" v-model="currentPath" @keyup.enter="navigateToPath"
+                           class="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                           placeholder="输入路径...">
+                    <button @click="navigateToPath"
+                            class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors">跳转</button>
+                </div>
+
+                <!-- 文件列表 -->
+                <div class="flex-1 overflow-y-auto p-2">
+                    <!-- 表头 -->
+                    <div class="grid grid-cols-[32px_1fr_70px_80px] gap-2 px-3 py-2 text-xs text-slate-500 font-medium border-b border-slate-700 mb-1">
+                        <span></span>
+                        <span>名称</span>
+                        <span class="text-right">大小</span>
+                        <span class="text-center">操作</span>
+                    </div>
+                    <!-- 文件项 -->
+                    <div v-for="file in fileList" :key="file.name"
+                         @dblclick="handleFileClick(file)"
+                         :class="['grid grid-cols-[32px_1fr_70px_80px] gap-2 px-3 py-3 rounded-lg cursor-pointer transition-colors group',
+                                  file.isDir ? 'bg-slate-700/30 hover:bg-slate-700/50' : 'hover:bg-slate-700/30']">
+                        <span class="text-xl flex items-center">{{ file.isDir ? '📁' : getFileIcon(file.name) }}</span>
+                        <span class="text-sm text-slate-200 truncate flex items-center" :title="file.name">{{ file.name }}</span>
+                        <span class="text-xs text-slate-500 text-right flex items-center justify-end">{{ formatFileSize(file.size) }}</span>
+                        <div class="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button v-if="!file.isDir" @click.stop="downloadFile(file)"
+                                    class="p-1.5 rounded hover:bg-blue-600/20 text-slate-400 hover:text-blue-400 transition-colors"
+                                    title="下载">⬇️</button>
+                            <button @click.stop="deleteFile(file)"
+                                    class="p-1.5 rounded hover:bg-red-600/20 text-slate-400 hover:text-red-400 transition-colors"
+                                    title="删除">🗑️</button>
+                        </div>
+                    </div>
+                    <!-- 空状态 -->
+                    <div v-if="fileList.length === 0" class="text-center py-12 text-slate-500">
+                        <span class="text-4xl block mb-2">📂</span>
+                        <p>目录为空</p>
+                    </div>
+                </div>
+
+                <!-- 状态栏 -->
+                <div v-if="uploadProgress > 0" class="p-3 bg-blue-600/20 border-t border-blue-600/30 text-blue-400 text-sm">
+                    上传中... {{ uploadProgress }}%
+                </div>
+            </div>
+
+            <!-- 右侧终端面板 -->
+            <div class="flex-1 bg-slate-900 flex flex-col">
+                <div class="flex items-center justify-between px-4 py-3 bg-slate-800 border-b border-slate-700">
+                    <h3 class="text-lg font-semibold text-white flex items-center gap-2">
+                        <span>💻</span> 终端
+                        <span v-if="connectionMode === 'ssh'" class="text-xs px-2 py-1 bg-blue-600/20 text-blue-400 rounded">{{ config.username }}@{{ config.host }}</span>
+                        <span v-else class="text-xs px-2 py-1 bg-green-600/20 text-green-400 rounded">Local</span>
+                    </h3>
+                    <button @click="disconnect"
+                            class="px-4 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded-lg text-sm font-medium transition-colors">
+                        断开连接
+                    </button>
+                </div>
+                <div class="flex-1 p-2 overflow-hidden">
+                    <div id="terminal-container" class="w-full h-full rounded-lg overflow-hidden"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 新建文件夹模态框 -->
+        <div v-if="showMkdirModal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
+            <div class="bg-slate-800 rounded-xl p-6 w-full max-w-sm mx-4 border border-slate-700 shadow-2xl">
+                <h3 class="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                    <span>📁</span> 新建文件夹
+                </h3>
+                <input type="text" v-model="newFolderName" placeholder="文件夹名称" ref="folderInput"
+                       class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 mb-4">
+                <div class="flex gap-3">
+                    <button @click="createFolder"
+                            class="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-medium py-2.5 px-4 rounded-lg transition-colors">
+                        创建
+                    </button>
+                    <button @click="showMkdirModal = false"
+                            class="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-medium py-2.5 px-4 rounded-lg transition-colors">
+                        取消
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/vendor/vue.global.prod.js"></script>
+    <script src="/vendor/xterm.min.js"></script>
+    <script src="/vendor/xterm-addon-fit.min.js"></script>
+    <script src="/js/app.js"></script>
+</body>
+</html>

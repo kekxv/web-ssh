@@ -1,0 +1,24 @@
+# 依赖
+node_modules/
+vendor/
+
+# 编译产物
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+web-ssh
+bin/
+dist/
+
+# 测试文件
+*.test
+*.out
+
+# 日志
+*.log
+
+# 临时文件
+*.tmp
+*.bak
