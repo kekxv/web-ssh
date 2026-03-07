@@ -81,7 +81,8 @@ createApp({
                 username: '',
                 password: '',
                 privateKey: '',
-                passphrase: ''
+                passphrase: '',
+                jumpHosts: []  // 跳板机配置数组
             },
             sessionId: '',
             sftpSessionId: '',
@@ -351,6 +352,25 @@ createApp({
                     const encryptedPassphrase = await encryptData(keyData.public_key, this.config.passphrase);
                     configToSend.encryptedPassphrase = encryptedPassphrase;
                     console.log('Passphrase encrypted, length:', encryptedPassphrase.length);
+                }
+
+                // 加密跳板机配置（如果存在）
+                if (this.config.jumpHosts && this.config.jumpHosts.length > 0) {
+                    console.log('Encrypting jump hosts...');
+                    configToSend.jumpHosts = [];
+                    for (let i = 0; i < this.config.jumpHosts.length; i++) {
+                        const jump = this.config.jumpHosts[i];
+                        const encryptedJump = {
+                            host: jump.host,
+                            port: jump.port,
+                            username: jump.username
+                        };
+                        if (jump.password) {
+                            encryptedJump.encryptedPassword = await encryptData(keyData.public_key, jump.password);
+                        }
+                        configToSend.jumpHosts.push(encryptedJump);
+                    }
+                    console.log('Jump hosts encrypted, count:', configToSend.jumpHosts.length);
                 }
 
                 console.log('Sending config:', JSON.stringify(configToSend, null, 2));
@@ -848,6 +868,29 @@ createApp({
             reader.readAsText(file);
 
             event.target.value = '';
+        },
+
+        // 添加跳板机
+        addJumpHost() {
+            if (!this.config.jumpHosts) {
+                this.config.jumpHosts = [];
+            }
+            if (this.config.jumpHosts.length >= 4) {
+                alert('最多支持 4 层跳板机');
+                return;
+            }
+            this.config.jumpHosts.push({
+                host: '',
+                port: 22,
+                username: '',
+                password: ''
+            });
+        },
+
+        // 删除跳板机
+        removeJumpHost(index) {
+            if (!this.config.jumpHosts) return;
+            this.config.jumpHosts.splice(index, 1);
         },
 
         // 根据文件扩展名返回图标

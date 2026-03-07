@@ -157,33 +157,22 @@ func NewSSHSessionManager() *SSHSessionManager {
 	}
 }
 
-// CreateSSHClient creates a new SSH client from config
+// CreateSSHClient creates a new SSH client from config with jump host support
 func CreateSSHClient(config *models.SSHConnectionConfig) (*ssh.Client, error) {
-	var authMethods []ssh.AuthMethod
+	// If there are jump hosts, create SSH tunnel through them
+	if len(config.JumpHosts) > 0 {
+		return CreateSSHClientWithJump(config)
+	}
 
-	if config.PrivateKey != "" {
-		// Parse private key
-		var signer ssh.Signer
-		var err error
+	// Direct connection (no jump hosts)
+	return createDirectConnection(config)
+}
 
-		if config.Passphrase != "" {
-			// Private key with passphrase
-			signer, err = ssh.ParsePrivateKeyWithPassphrase([]byte(config.PrivateKey), []byte(config.Passphrase))
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse encrypted private key: %v", err)
-			}
-		} else {
-			// Private key without passphrase
-			signer, err = ssh.ParsePrivateKey([]byte(config.PrivateKey))
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse private key: %v", err)
-			}
-		}
-		authMethods = append(authMethods, ssh.PublicKeys(signer))
-	} else if config.Password != "" {
-		authMethods = append(authMethods, ssh.Password(config.Password))
-	} else {
-		return nil, fmt.Errorf("no authentication method provided")
+// createDirectConnection creates a direct SSH connection
+func createDirectConnection(config *models.SSHConnectionConfig) (*ssh.Client, error) {
+	authMethods, err := getAuthMethods(config)
+	if err != nil {
+		return nil, err
 	}
 
 	clientConfig := ssh.ClientConfig{
@@ -200,6 +189,182 @@ func CreateSSHClient(config *models.SSHConnectionConfig) (*ssh.Client, error) {
 	}
 
 	return client, nil
+}
+
+// getAuthMethods returns authentication methods based on config
+func getAuthMethods(config *models.SSHConnectionConfig) ([]ssh.AuthMethod, error) {
+	var authMethods []ssh.AuthMethod
+
+	if config.PrivateKey != "" {
+		var signer ssh.Signer
+		var err error
+
+		if config.Passphrase != "" {
+			signer, err = ssh.ParsePrivateKeyWithPassphrase([]byte(config.PrivateKey), []byte(config.Passphrase))
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse encrypted private key: %v", err)
+			}
+		} else {
+			signer, err = ssh.ParsePrivateKey([]byte(config.PrivateKey))
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse private key: %v", err)
+			}
+		}
+		authMethods = append(authMethods, ssh.PublicKeys(signer))
+	} else if config.Password != "" {
+		authMethods = append(authMethods, ssh.Password(config.Password))
+	} else {
+		return nil, fmt.Errorf("no authentication method provided")
+	}
+
+	return authMethods, nil
+}
+
+// CreateSSHClientWithJump creates SSH connection through jump hosts (supports up to 4 levels)
+func CreateSSHClientWithJump(config *models.SSHConnectionConfig) (*ssh.Client, error) {
+	// Limit jump hosts to 4 levels
+	jumpHosts := config.JumpHosts
+	if len(jumpHosts) > 4 {
+		jumpHosts = jumpHosts[:4]
+	}
+
+	var currentClient *ssh.Client
+	var err error
+
+	// Connect through each jump host
+	for i, jumpHost := range jumpHosts {
+		// Decrypt jump host credentials if needed
+		if jumpHost.EncryptedPassword != "" {
+			jumpHost.Password, err = DecryptData(jumpHost.EncryptedPassword)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decrypt jump host %d password: %v", i+1, err)
+			}
+		}
+		if jumpHost.EncryptedPrivateKey != "" {
+			jumpHost.PrivateKey, err = DecryptData(jumpHost.EncryptedPrivateKey)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decrypt jump host %d private key: %v", i+1, err)
+			}
+		}
+		if jumpHost.EncryptedPassphrase != "" {
+			jumpHost.Passphrase, err = DecryptData(jumpHost.EncryptedPassphrase)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decrypt jump host %d passphrase: %v", i+1, err)
+			}
+		}
+
+		jumpConfig := &models.SSHConnectionConfig{
+			Host:       jumpHost.Host,
+			Port:       jumpHost.Port,
+			Username:   jumpHost.Username,
+			Password:   jumpHost.Password,
+			PrivateKey: jumpHost.PrivateKey,
+			Passphrase: jumpHost.Passphrase,
+		}
+
+		// Create connection to jump host
+		if currentClient == nil {
+			// First jump host - direct connection
+			currentClient, err = createDirectConnection(jumpConfig)
+			if err != nil {
+				return nil, fmt.Errorf("failed to connect to jump host %d (%s:%d): %v", i+1, jumpHost.Host, jumpHost.Port, err)
+			}
+		} else {
+			// Subsequent jump hosts - tunnel through previous connection
+			jumpAddr := fmt.Sprintf("%s:%d", jumpHost.Host, jumpHost.Port)
+			conn, err := currentClient.Dial("tcp", jumpAddr)
+			if err != nil {
+				currentClient.Close()
+				return nil, fmt.Errorf("failed to tunnel to jump host %d (%s): %v", i+1, jumpAddr, err)
+			}
+
+			// Create SSH config for jump host
+			authMethods, err := getAuthMethods(jumpConfig)
+			if err != nil {
+				currentClient.Close()
+				return nil, fmt.Errorf("failed to get auth methods for jump host %d: %v", i+1, err)
+			}
+
+			sshConfig := ssh.ClientConfig{
+				User:            jumpConfig.Username,
+				Auth:            authMethods,
+				HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+				Timeout:         30 * time.Second,
+			}
+
+			// Create SSH client connection over the tunnel
+			ncc, chans, reqs, err := ssh.NewClientConn(conn, jumpAddr, &sshConfig)
+			if err != nil {
+				currentClient.Close()
+				return nil, fmt.Errorf("failed to create SSH client for jump host %d: %v", i+1, err)
+			}
+
+			currentClient = ssh.NewClient(ncc, chans, reqs)
+		}
+	}
+
+	// Decrypt target host credentials if needed
+	if config.EncryptedPassword != "" {
+		config.Password, err = DecryptData(config.EncryptedPassword)
+		if err != nil {
+			if currentClient != nil {
+				currentClient.Close()
+			}
+			return nil, fmt.Errorf("failed to decrypt target password: %v", err)
+		}
+	}
+	if config.EncryptedPrivateKey != "" {
+		config.PrivateKey, err = DecryptData(config.EncryptedPrivateKey)
+		if err != nil {
+			if currentClient != nil {
+				currentClient.Close()
+			}
+			return nil, fmt.Errorf("failed to decrypt target private key: %v", err)
+		}
+	}
+	if config.EncryptedPassphrase != "" {
+		config.Passphrase, err = DecryptData(config.EncryptedPassphrase)
+		if err != nil {
+			if currentClient != nil {
+				currentClient.Close()
+			}
+			return nil, fmt.Errorf("failed to decrypt target passphrase: %v", err)
+		}
+	}
+
+	// Connect to final target through the last jump host
+	targetAddr := fmt.Sprintf("%s:%d", config.Host, config.Port)
+	conn, err := currentClient.Dial("tcp", targetAddr)
+	if err != nil {
+		currentClient.Close()
+		return nil, fmt.Errorf("failed to tunnel to target host (%s): %v", targetAddr, err)
+	}
+
+	// Create SSH config for target host
+	authMethods, err := getAuthMethods(config)
+	if err != nil {
+		currentClient.Close()
+		return nil, fmt.Errorf("failed to get auth methods for target host: %v", err)
+	}
+
+	sshConfig := ssh.ClientConfig{
+		User:            config.Username,
+		Auth:            authMethods,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         30 * time.Second,
+	}
+
+	// Create final SSH client connection
+	ncc, chans, reqs, err := ssh.NewClientConn(conn, targetAddr, &sshConfig)
+	if err != nil {
+		currentClient.Close()
+		return nil, fmt.Errorf("failed to create SSH client for target host: %v", err)
+	}
+
+	// Close the intermediate client (the connection is already established)
+	currentClient.Close()
+
+	return ssh.NewClient(ncc, chans, reqs), nil
 }
 
 // AddSession adds a session to the manager

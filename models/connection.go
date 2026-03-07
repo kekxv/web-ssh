@@ -1,7 +1,7 @@
 package models
 
-// SSHConnectionConfig holds SSH connection configuration
-type SSHConnectionConfig struct {
+// JumpHostConfig holds jump host configuration
+type JumpHostConfig struct {
 	Host              string `json:"host"`
 	Port              int    `json:"port"`
 	Username          string `json:"username"`
@@ -11,6 +11,20 @@ type SSHConnectionConfig struct {
 	EncryptedPrivateKey string `json:"encryptedPrivateKey,omitempty"`
 	Passphrase        string `json:"passphrase,omitempty"`
 	EncryptedPassphrase string `json:"encryptedPassphrase,omitempty"`
+}
+
+// SSHConnectionConfig holds SSH connection configuration
+type SSHConnectionConfig struct {
+	Host              string         `json:"host"`
+	Port              int            `json:"port"`
+	Username          string         `json:"username"`
+	Password          string         `json:"password,omitempty"`
+	EncryptedPassword string         `json:"encryptedPassword,omitempty"`
+	PrivateKey        string         `json:"privateKey,omitempty"`
+	EncryptedPrivateKey string       `json:"encryptedPrivateKey,omitempty"`
+	Passphrase        string         `json:"passphrase,omitempty"`
+	EncryptedPassphrase string       `json:"encryptedPassphrase,omitempty"`
+	JumpHosts         []JumpHostConfig `json:"jumpHosts,omitempty"` // 支持最多 4 层跳板机
 }
 
 // TerminalMessage represents a WebSocket message for terminal
