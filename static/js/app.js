@@ -24,15 +24,30 @@ createApp({
             defaultPath: '~',
             showMkdirModal: false,
             newFolderName: '',
-            uploadProgress: 0
+            uploadProgress: 0,
+            // HTTP 长连接相关
+            useHttpFallback: false,
+            httpPollingTimer: null,
+            localUser: null
         };
     },
 
-    mounted() {
+    async mounted() {
+        await this.loadLocalUser();
         this.initTerminal();
     },
 
     methods: {
+        async loadLocalUser() {
+            try {
+                const response = await fetch('/api/local/user');
+                const data = await response.json();
+                this.localUser = data;
+            } catch (error) {
+                console.error('Failed to load local user:', error);
+            }
+        },
+
         initTerminal() {
             this.terminal = new Terminal({
                 cursorBlink: true,
@@ -56,7 +71,10 @@ createApp({
             // Handle terminal resize
             window.addEventListener('resize', () => {
                 this.fitAddon.fit();
-                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                if (this.connectionMode === 'local' && this.useHttpFallback) {
+                    // HTTP 模式下通过 API 发送 resize
+                    this.sendHttpResize();
+                } else if (this.ws && this.ws.readyState === WebSocket.OPEN) {
                     const dimensions = this.getTerminalDimensions();
                     this.ws.send(JSON.stringify({
                         type: 'resize',
@@ -68,7 +86,9 @@ createApp({
 
             // Send input to server
             this.terminal.onData(data => {
-                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                if (this.connectionMode === 'local' && this.useHttpFallback) {
+                    this.sendHttpInput(data);
+                } else if (this.ws && this.ws.readyState === WebSocket.OPEN) {
                     this.ws.send(JSON.stringify({
                         type: 'input',
                         data: data
@@ -140,10 +160,129 @@ createApp({
             }
         },
 
-        connectLocal() {
-            this.sessionId = 'local';
-            this.connectTerminal('local');
+        async connectLocal() {
+            this.useHttpFallback = false;
+
+            // 先尝试 WebSocket 连接
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws/terminal?session_id=local&mode=local`;
+
+            // 创建临时 WebSocket 测试连接
+            const testWs = new WebSocket(wsUrl);
+            testWs.binaryType = 'arraybuffer';
+
+            const wsSupported = await Promise.race([
+                new Promise(resolve => {
+                    testWs.onopen = () => resolve(true);
+                }),
+                new Promise(resolve => {
+                    setTimeout(() => resolve(false), 2000);
+                })
+            ]);
+
+            testWs.close();
+
+            if (wsSupported) {
+                // WebSocket 可用，使用正常连接
+                this.sessionId = 'local_ws';
+                this.connectTerminal('local');
+            } else {
+                // WebSocket 不可用，降级到 HTTP 长连接
+                console.log('WebSocket not supported, using HTTP long polling');
+                this.useHttpFallback = true;
+                await this.connectLocalHttp();
+            }
+
             this.connected = true;
+        },
+
+        async connectLocalHttp() {
+            try {
+                const response = await fetch('/api/local/connect', {
+                    method: 'POST'
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to connect');
+                }
+
+                const data = await response.json();
+                this.sessionId = data.session_id;
+
+                // 开始 HTTP 轮询
+                this.startHttpPolling();
+            } catch (error) {
+                alert('本地连接失败：' + error.message);
+            }
+        },
+
+        startHttpPolling() {
+            const poll = async () => {
+                if (!this.sessionId || !this.useHttpFallback) return;
+
+                try {
+                    const response = await fetch(`/api/local/read?session_id=${encodeURIComponent(this.sessionId)}`);
+                    const data = await response.json();
+
+                    if (data.type === 'output' && data.data) {
+                        // Base64 解码
+                        const decoder = new TextDecoder('utf-8');
+                        const binary = atob(data.data);
+                        const bytes = new Uint8Array(binary.length);
+                        for (let i = 0; i < binary.length; i++) {
+                            bytes[i] = binary.charCodeAt(i);
+                        }
+                        const text = decoder.decode(bytes);
+                        this.terminal.write(text);
+                    } else if (data.type === 'close') {
+                        console.log('Session closed');
+                        return;
+                    }
+                } catch (error) {
+                    console.error('Poll error:', error);
+                }
+
+                // 继续轮询
+                this.httpPollingTimer = setTimeout(poll, 100);
+            };
+
+            poll();
+        },
+
+        async sendHttpInput(data) {
+            if (!this.sessionId) return;
+
+            try {
+                await fetch(`/api/local/write?session_id=${encodeURIComponent(this.sessionId)}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        type: 'input',
+                        data: data
+                    })
+                });
+            } catch (error) {
+                console.error('Failed to send input:', error);
+            }
+        },
+
+        async sendHttpResize() {
+            if (!this.sessionId) return;
+
+            const dimensions = this.getTerminalDimensions();
+            try {
+                await fetch(`/api/local/write?session_id=${encodeURIComponent(this.sessionId)}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        type: 'resize',
+                        cols: dimensions.cols,
+                        rows: dimensions.rows
+                    })
+                });
+            } catch (error) {
+                console.error('Failed to send resize:', error);
+            }
         },
 
         connectTerminal(mode) {
@@ -200,12 +339,23 @@ createApp({
         },
 
         disconnect() {
+            // 停止 HTTP 轮询
+            if (this.httpPollingTimer) {
+                clearTimeout(this.httpPollingTimer);
+                this.httpPollingTimer = null;
+            }
+
             if (this.ws) {
                 this.ws.close();
                 this.ws = null;
             }
 
-            if (this.sessionId) {
+            // 关闭本地会话
+            if (this.sessionId && this.useHttpFallback) {
+                fetch(`/api/local/close?session_id=${encodeURIComponent(this.sessionId)}`, { method: 'POST' });
+            }
+
+            if (this.sessionId && !this.useHttpFallback) {
                 fetch(`/api/ssh/disconnect?session_id=${this.sessionId}`, { method: 'POST' });
             }
             if (this.sftpSessionId) {
@@ -219,6 +369,7 @@ createApp({
             this.config.password = '';
             this.config.privateKey = '';
             this.config.passphrase = '';
+            this.useHttpFallback = false;
         },
 
         // 获取默认路径（HOME）

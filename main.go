@@ -78,6 +78,23 @@ func main() {
 		terminalHandler.HandleTerminal(c.Writer, c.Request)
 	})
 
+	// HTTP Long Polling routes (fallback for WebSocket)
+	r.GET("/api/local/user", func(c *gin.Context) {
+		handlers.GetCurrentUser(c.Writer, c.Request)
+	})
+	r.POST("/api/local/connect", func(c *gin.Context) {
+		handlers.LocalSessionRequest(c.Writer, c.Request, terminalHandler)
+	})
+	r.GET("/api/local/read", func(c *gin.Context) {
+		handlers.LocalSessionRead(c.Writer, c.Request, terminalHandler)
+	})
+	r.POST("/api/local/write", func(c *gin.Context) {
+		handlers.LocalSessionWrite(c.Writer, c.Request, terminalHandler)
+	})
+	r.POST("/api/local/close", func(c *gin.Context) {
+		handlers.LocalSessionClose(c.Writer, c.Request, terminalHandler)
+	})
+
 	// Start server
 	log.Println("Starting Web SSH server on :8080")
 	log.Println("Open http://localhost:8080 in your browser")

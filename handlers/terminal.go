@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/user"
 	"sync"
 	"time"
 
@@ -28,6 +30,15 @@ type TerminalHandler struct {
 	sessionManager *SSHSessionManager
 	sessions       map[string]*TerminalSession
 	mu             sync.RWMutex
+	localSessions  map[string]*LocalPTYSession
+}
+
+// LocalPTYSession represents a local PTY session
+type LocalPTYSession struct {
+	ID       string
+	PTY      *os.File
+	Cmd      *exec.Cmd
+	mu       sync.Mutex
 }
 
 // TerminalSession represents a terminal WebSocket session
@@ -45,6 +56,7 @@ func NewTerminalHandler(sm *SSHSessionManager) *TerminalHandler {
 	return &TerminalHandler{
 		sessionManager: sm,
 		sessions:       make(map[string]*TerminalSession),
+		localSessions:  make(map[string]*LocalPTYSession),
 	}
 }
 
@@ -316,4 +328,186 @@ func startLocalBash() (*os.File, error) {
 		return nil, err
 	}
 	return ptmx, nil
+}
+
+// GetCurrentUser returns the current system user info
+func GetCurrentUser(w http.ResponseWriter, r *http.Request) {
+	user, err := user.Current()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	hostname, _ := os.Hostname()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"username": user.Username,
+		"uid":      user.Uid,
+		"gid":      user.Gid,
+		"home":     user.HomeDir,
+		"hostname": hostname,
+	})
+}
+
+// LocalSessionRequest handles local bash session creation
+func LocalSessionRequest(w http.ResponseWriter, r *http.Request, h *TerminalHandler) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	sessionID := generateSessionID()
+
+	// Start local bash
+	cmd := exec.Command("bash")
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to start bash: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	session := &LocalPTYSession{
+		ID:  sessionID,
+		PTY: ptmx,
+		Cmd: cmd,
+	}
+
+	h.mu.Lock()
+	h.localSessions[sessionID] = session
+	h.mu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"session_id": sessionID,
+	})
+}
+
+// LocalSessionRead handles reading output from local bash (HTTP long polling)
+func LocalSessionRead(w http.ResponseWriter, r *http.Request, h *TerminalHandler) {
+	sessionID := r.URL.Query().Get("session_id")
+	if sessionID == "" {
+		http.Error(w, "session_id required", http.StatusBadRequest)
+		return
+	}
+
+	h.mu.RLock()
+	session, ok := h.localSessions[sessionID]
+	h.mu.RUnlock()
+
+	if !ok {
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
+	}
+
+	// Set timeout for long polling
+	timeout := time.After(30 * time.Second)
+	done := make(chan struct{})
+
+	var buf [4096]byte
+	var n int
+	var readErr error
+
+	go func() {
+		n, readErr = session.PTY.Read(buf[:])
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		if n > 0 {
+			// Encode as base64
+			encoded := base64.StdEncoding.EncodeToString(buf[:n])
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{
+				"data": encoded,
+				"type": "output",
+			})
+		}
+		if readErr != nil {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{
+				"type": "close",
+			})
+		}
+	case <-timeout:
+		// Send empty response to continue polling
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"type": "timeout",
+		})
+	}
+}
+
+// LocalSessionWrite handles writing input to local bash
+func LocalSessionWrite(w http.ResponseWriter, r *http.Request, h *TerminalHandler) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	sessionID := r.URL.Query().Get("session_id")
+	if sessionID == "" {
+		http.Error(w, "session_id required", http.StatusBadRequest)
+		return
+	}
+
+	h.mu.RLock()
+	session, ok := h.localSessions[sessionID]
+	h.mu.RUnlock()
+
+	if !ok {
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
+	}
+
+	var msg models.TerminalMessage
+	if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	switch msg.Type {
+	case "input":
+		session.PTY.Write([]byte(msg.Data))
+	case "resize":
+		// TODO: Handle resize
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// LocalSessionClose handles closing local bash session
+func LocalSessionClose(w http.ResponseWriter, r *http.Request, h *TerminalHandler) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	sessionID := r.URL.Query().Get("session_id")
+	if sessionID == "" {
+		http.Error(w, "session_id required", http.StatusBadRequest)
+		return
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if session, ok := h.localSessions[sessionID]; ok {
+		if session.PTY != nil {
+			session.PTY.Close()
+		}
+		if session.Cmd != nil && session.Cmd.Process != nil {
+			session.Cmd.Process.Kill()
+		}
+		delete(h.localSessions, sessionID)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }

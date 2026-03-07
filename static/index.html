@@ -32,7 +32,7 @@
                             <select v-model="connectionMode"
                                     class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
                                 <option value="ssh">🖥️ SSH 远程连接</option>
-                                <option value="local">💻 本机 Bash</option>
+                                <option value="local">💻 本机 Bash ({{ localUser?.username || '加载中...' }}@{{ localUser?.hostname || 'localhost' }})</option>
                             </select>
                         </div>
 
