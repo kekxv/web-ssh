@@ -204,8 +204,11 @@ func (h *TerminalHandler) sshToWS(reader io.Reader, ts *TerminalSession) {
 }
 
 func (h *TerminalHandler) handleLocalBash(ts *TerminalSession, username string) {
-	// Start local bash shell with optional user switch
-	proc, err := startLocalBashWithUser(username)
+	// Start local login bash shell
+	// Note: Direct user switching via su is not supported when running
+	// as a background service on macOS/Linux. Users can manually run
+	// "su - username" in the terminal if needed.
+	proc, err := startLocalBash()
 	if err != nil {
 		ts.SendError(fmt.Sprintf("Failed to start local bash: %v", err))
 		return
@@ -324,48 +327,13 @@ func generateSessionID() string {
 	return fmt.Sprintf("session_%d", time.Now().UnixNano())
 }
 
-// startLocalBash starts a local bash process with PTY
+// startLocalBash starts a login bash process with PTY
 func startLocalBash() (*os.File, error) {
-	cmd := exec.Command("bash")
+	cmd := exec.Command("bash", "--login")
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
 		return nil, err
 	}
-	return ptmx, nil
-}
-
-// startLocalBashWithUser starts a login shell with optional user switch using su
-func startLocalBashWithUser(username string) (*os.File, error) {
-	if username == "" {
-		return startLocalBash()
-	}
-
-	// Use su to switch to specified user (will prompt for password)
-	suPath := findSuPath()
-
-	// Create the command
-	var cmd *exec.Cmd
-	if runtime.GOOS == "darwin" {
-		// macOS: su requires -l for login shell
-		cmd = exec.Command(suPath, "-l", username)
-	} else {
-		// Linux: su - username
-		cmd = exec.Command(suPath, "-", username)
-	}
-
-	// Start the command with PTY - don't try to set ctty from os.Stdin
-	// as it may not be valid when running as a background service
-	ptmx, err := pty.Start(cmd)
-	if err != nil {
-		log.Printf("Failed to start su for %s: %v, falling back to bash", username, err)
-		return startLocalBash()
-	}
-
-	// Try to set initial terminal size (80x24 is standard default)
-	// This avoids the "Setctty set but Ctty not valid in child" error on macOS
-	winsize := &pty.Winsize{Rows: 24, Cols: 80}
-	pty.Setsize(ptmx, winsize)
-
 	return ptmx, nil
 }
 
@@ -430,35 +398,10 @@ func GetSystemUsers(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"os":       runtime.GOOS,
-		"arch":     runtime.GOARCH,
-		"users":    users,
-		"loginCmd": getLoginCommand(),
+		"os":    runtime.GOOS,
+		"arch":  runtime.GOARCH,
+		"users": users,
 	})
-}
-
-// getLoginCommand returns the appropriate login command for the OS
-func getLoginCommand() string {
-	if runtime.GOOS == "darwin" {
-		return "/usr/bin/login"
-	}
-	return "/bin/login"
-}
-
-// findSuPath returns the path to su command
-func findSuPath() string {
-	paths := []string{"/bin/su", "/usr/bin/su", "/usr/sbin/su"}
-	for _, p := range paths {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	// Fallback to PATH lookup
-	cmd, err := exec.LookPath("su")
-	if err != nil {
-		return "su"
-	}
-	return cmd
 }
 
 // LocalSessionRequest handles local bash session creation with login
@@ -476,40 +419,27 @@ func LocalSessionRequest(w http.ResponseWriter, r *http.Request, h *TerminalHand
 
 	sessionID := generateSessionID()
 
-	// Start login shell
+	// Start login shell - use bash --login for compatibility
+	// su command requires a valid control terminal which is not available
+	// when running as a background service on macOS
 	var ptmx *os.File
 	var err error
 
 	if req.Username != "" && req.Username != "root" {
-		// Use su to switch to specified user (prompts for password)
-		suPath := findSuPath()
-		cmd := exec.Command(suPath, "-", req.Username)
+		// Note: Direct user switching via su is not supported when running
+		// as a background service. User can manually run "su - username"
+		// in the terminal after connection.
+		log.Printf("Starting bash for user %s (manual su required)", req.Username)
+		cmd := exec.Command("bash", "--login")
 		ptmx, err = pty.Start(cmd)
-		log.Printf("Starting su to user %s: %v", req.Username, err)
 	} else {
-		// Start login shell for current user or root login
-		loginCmd := getLoginCommand()
-		// Check if login command exists and we have permission
-		if _, err := os.Stat(loginCmd); err == nil {
-			// Try login (may require root)
-			cmd := exec.Command(loginCmd, "-f", "root")
-			ptmx, err = pty.Start(cmd)
-			if err != nil {
-				// Fallback to su
-				suPath := findSuPath()
-				cmd = exec.Command(suPath, "-")
-				ptmx, err = pty.Start(cmd)
-			}
-		} else {
-			// Fallback to su
-			suPath := findSuPath()
-			cmd := exec.Command(suPath, "-")
-			ptmx, err = pty.Start(cmd)
-		}
+		// Start login bash for current user
+		cmd := exec.Command("bash", "--login")
+		ptmx, err = pty.Start(cmd)
 	}
 
 	if err != nil {
-		// Final fallback: just start bash
+		// Final fallback: just start bash without login flag
 		cmd := exec.Command("bash")
 		ptmx, err = pty.Start(cmd)
 		if err != nil {
