@@ -90,7 +90,7 @@ createApp({
             // HTTP 长连接相关
             useHttpFallback: false,
             httpPollingTimer: null,
-            sessionId: 'local_ws'
+            isLocalMode: false
         };
     },
 
@@ -263,6 +263,7 @@ createApp({
         },
 
         async connectLocal() {
+            this.isLocalMode = false;
             this.useHttpFallback = false;
 
             // 先尝试 WebSocket 连接
@@ -295,7 +296,12 @@ createApp({
                 await this.connectLocalHttp();
             }
 
+            // 设置本地模式并获取默认路径
+            this.isLocalMode = true;
+            this.currentPath = '.';
+            this.defaultPath = '.';
             this.connected = true;
+            this.loadFileList();
         },
 
         async connectLocalHttp() {
@@ -508,10 +514,17 @@ createApp({
         },
 
         async loadFileList() {
-            if (!this.sftpSessionId) return;
+            if (!this.sftpSessionId && !this.isLocalMode) return;
 
             try {
-                const response = await fetch(`/api/sftp/list?session_id=${this.sftpSessionId}&path=${encodeURIComponent(this.currentPath)}`);
+                let url;
+                if (this.isLocalMode) {
+                    url = `/api/local/file/list?path=${encodeURIComponent(this.currentPath)}`;
+                } else {
+                    url = `/api/sftp/list?session_id=${this.sftpSessionId}&path=${encodeURIComponent(this.currentPath)}`;
+                }
+
+                const response = await fetch(url);
                 const data = await response.json();
 
                 if (data.success) {
@@ -559,7 +572,13 @@ createApp({
         },
 
         async downloadFile(file) {
-            const downloadUrl = `/api/sftp/download?session_id=${this.sftpSessionId}&path=${encodeURIComponent(this.currentPath + '/' + file.name)}`;
+            let downloadUrl;
+            if (this.isLocalMode) {
+                const path = this.currentPath === '/' ? '/' + file.name : this.currentPath + '/' + file.name;
+                downloadUrl = `/api/local/file/download?path=${encodeURIComponent(path)}`;
+            } else {
+                downloadUrl = `/api/sftp/download?session_id=${this.sftpSessionId}&path=${encodeURIComponent(this.currentPath + '/' + file.name)}`;
+            }
             const a = document.createElement('a');
             a.href = downloadUrl;
             a.download = file.name;
@@ -583,7 +602,14 @@ createApp({
 
             try {
                 this.uploadProgress = 10;
-                const response = await fetch(`/api/sftp/upload?session_id=${this.sftpSessionId}&path=${encodeURIComponent(remotePath)}`, {
+                let url;
+                if (this.isLocalMode) {
+                    url = `/api/local/file/upload?path=${encodeURIComponent(remotePath)}`;
+                } else {
+                    url = `/api/sftp/upload?session_id=${this.sftpSessionId}&path=${encodeURIComponent(remotePath)}`;
+                }
+
+                const response = await fetch(url, {
                     method: 'POST',
                     body: formData
                 });
@@ -612,7 +638,14 @@ createApp({
             const remotePath = this.currentPath === '/' ? '/' + this.newFolderName : this.currentPath + '/' + this.newFolderName;
 
             try {
-                const response = await fetch(`/api/sftp/mkdir?session_id=${this.sftpSessionId}&path=${encodeURIComponent(remotePath)}`, {
+                let url;
+                if (this.isLocalMode) {
+                    url = `/api/local/file/mkdir?path=${encodeURIComponent(remotePath)}`;
+                } else {
+                    url = `/api/sftp/mkdir?session_id=${this.sftpSessionId}&path=${encodeURIComponent(remotePath)}`;
+                }
+
+                const response = await fetch(url, {
                     method: 'POST'
                 });
 
@@ -636,7 +669,14 @@ createApp({
             const remotePath = this.currentPath === '/' ? '/' + file.name : this.currentPath + '/' + file.name;
 
             try {
-                const response = await fetch(`/api/sftp/remove?session_id=${this.sftpSessionId}&path=${encodeURIComponent(remotePath)}`, {
+                let url;
+                if (this.isLocalMode) {
+                    url = `/api/local/file/remove?path=${encodeURIComponent(remotePath)}`;
+                } else {
+                    url = `/api/sftp/remove?session_id=${this.sftpSessionId}&path=${encodeURIComponent(remotePath)}`;
+                }
+
+                const response = await fetch(url, {
                     method: 'POST'
                 });
 

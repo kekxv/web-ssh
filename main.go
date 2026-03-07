@@ -97,6 +97,29 @@ func main() {
 		handlers.LocalSessionClose(c.Writer, c.Request, terminalHandler)
 	})
 
+	// Local file management routes
+	r.GET("/api/local/file/list", func(c *gin.Context) {
+		handlers.LocalFileList(c.Writer, c.Request)
+	})
+	r.GET("/api/local/file/download", func(c *gin.Context) {
+		handlers.LocalFileDownload(c.Writer, c.Request)
+	})
+	r.POST("/api/local/file/upload", func(c *gin.Context) {
+		handlers.LocalFileUpload(c.Writer, c.Request)
+	})
+	r.POST("/api/local/file/mkdir", func(c *gin.Context) {
+		handlers.LocalFileMkdir(c.Writer, c.Request)
+	})
+	r.POST("/api/local/file/remove", func(c *gin.Context) {
+		handlers.LocalFileRemove(c.Writer, c.Request)
+	})
+	r.GET("/api/local/file/pwd", func(c *gin.Context) {
+		handlers.LocalFilePwd(c.Writer, c.Request)
+	})
+	r.POST("/api/local/file/cd", func(c *gin.Context) {
+		handlers.LocalFileCd(c.Writer, c.Request)
+	})
+
 	// Start server
 	log.Println("Starting Web SSH server on :8080")
 	log.Println("Open http://localhost:8080 in your browser")
