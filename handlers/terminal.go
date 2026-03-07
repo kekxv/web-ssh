@@ -204,15 +204,30 @@ func (h *TerminalHandler) sshToWS(reader io.Reader, ts *TerminalSession) {
 }
 
 func (h *TerminalHandler) handleLocalBash(ts *TerminalSession, username string) {
-	// Start local login bash shell
-	// Note: Direct user switching via su is not supported when running
-	// as a background service on macOS/Linux. Users can manually run
-	// "su - username" in the terminal if needed.
-	proc, err := startLocalBash()
-	if err != nil {
-		ts.SendError(fmt.Sprintf("Failed to start local bash: %v", err))
-		return
+	// Use /usr/bin/login for macOS or /bin/login for Linux
+	// This provides the proper login prompt with username and password
+	loginCmd := "/usr/bin/login"
+	if _, err := os.Stat(loginCmd); err != nil {
+		loginCmd = "/bin/login"
 	}
+
+	// Start login - will prompt for username and password
+	// -p: preserve environment
+	cmd := exec.Command(loginCmd, "-p")
+	proc, err := pty.Start(cmd)
+	log.Printf("Starting %s via WebSocket: %v", loginCmd, err)
+
+	if err != nil {
+		// Fallback to bash if login fails
+		log.Printf("Login failed: %v, falling back to bash", err)
+		cmd = exec.Command("bash", "--login")
+		proc, err = pty.Start(cmd)
+		if err != nil {
+			ts.SendError(fmt.Sprintf("Failed to start local bash: %v", err))
+			return
+		}
+	}
+
 	ts.LocalProc = proc
 
 	// Start goroutines for I/O
@@ -411,36 +426,29 @@ func LocalSessionRequest(w http.ResponseWriter, r *http.Request, h *TerminalHand
 		return
 	}
 
-	// Parse request body for username
-	var req struct {
-		Username string `json:"username,omitempty"`
-	}
-	json.NewDecoder(r.Body).Decode(&req)
-
 	sessionID := generateSessionID()
 
-	// Start login shell - use bash --login for compatibility
-	// su command requires a valid control terminal which is not available
-	// when running as a background service on macOS
+	// Use /usr/bin/login for macOS or /bin/login for Linux
+	// This provides the proper login prompt with username and password
 	var ptmx *os.File
 	var err error
 
-	if req.Username != "" && req.Username != "root" {
-		// Note: Direct user switching via su is not supported when running
-		// as a background service. User can manually run "su - username"
-		// in the terminal after connection.
-		log.Printf("Starting bash for user %s (manual su required)", req.Username)
-		cmd := exec.Command("bash", "--login")
-		ptmx, err = pty.Start(cmd)
-	} else {
-		// Start login bash for current user
-		cmd := exec.Command("bash", "--login")
-		ptmx, err = pty.Start(cmd)
+	loginCmd := "/usr/bin/login"
+	if _, err := os.Stat(loginCmd); err != nil {
+		loginCmd = "/bin/login"
 	}
 
+	// Start login without -f flag to require password authentication
+	// -p: preserve environment
+	// The login program will prompt for username and password
+	cmd := exec.Command(loginCmd, "-p")
+	ptmx, err = pty.Start(cmd)
+	log.Printf("Starting %s: %v", loginCmd, err)
+
 	if err != nil {
-		// Final fallback: just start bash without login flag
-		cmd := exec.Command("bash")
+		// Fallback to bash if login fails
+		log.Printf("Login failed: %v, falling back to bash", err)
+		cmd = exec.Command("bash", "--login")
 		ptmx, err = pty.Start(cmd)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Failed to start shell: %v", err), http.StatusInternalServerError)

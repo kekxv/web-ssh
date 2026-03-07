@@ -28,52 +28,15 @@ createApp({
             // HTTP 长连接相关
             useHttpFallback: false,
             httpPollingTimer: null,
-            localUser: null,
-            systemInfo: null,
-            localUsername: ''
+            sessionId: 'local_ws'
         };
     },
 
     async mounted() {
-        await this.loadLocalUser();
-        await this.loadSystemUsers();
         this.initTerminal();
     },
 
     methods: {
-        async loadLocalUser() {
-            try {
-                const response = await fetch('/api/local/user');
-                const data = await response.json();
-                this.localUser = data;
-            } catch (error) {
-                console.error('Failed to load local user:', error);
-            }
-        },
-
-        async loadSystemUsers() {
-            try {
-                const response = await fetch('/api/local/users');
-                const data = await response.json();
-                this.systemInfo = data;
-                // 默认选择当前用户
-                if (this.localUser && this.systemInfo && this.systemInfo.users) {
-                    const currentUser = this.systemInfo.users.find(u => u.username === this.localUser.username);
-                    if (currentUser) {
-                        this.localUsername = currentUser.username;
-                    }
-                }
-            } catch (error) {
-                console.error('Failed to load system users:', error);
-            }
-        },
-
-        onModeChange() {
-            // 当切换到本机登录模式时，自动选择当前用户
-            if (this.connectionMode === 'local' && this.localUser && !this.localUsername) {
-                this.localUsername = this.localUser.username;
-            }
-        },
 
         initTerminal() {
             this.terminal = new Terminal({
@@ -228,9 +191,7 @@ createApp({
                 const response = await fetch('/api/local/connect', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        username: this.localUsername || ''
-                    })
+                    body: JSON.stringify({})
                 });
 
                 if (!response.ok) {
@@ -319,11 +280,6 @@ createApp({
         connectTerminal(mode) {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             let wsUrl = `${protocol}//${window.location.host}/ws/terminal?session_id=${this.sessionId}&mode=${mode}`;
-
-            // 本机登录模式添加用户名参数
-            if (mode === 'local' && this.localUsername) {
-                wsUrl += `&username=${encodeURIComponent(this.localUsername)}`;
-            }
 
             this.ws = new WebSocket(wsUrl);
             // Set binary type to arraybuffer for proper handling

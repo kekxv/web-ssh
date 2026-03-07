@@ -92,21 +92,11 @@
                             <div class="bg-slate-900/50 rounded-lg p-4 border border-slate-700">
                                 <div class="flex items-center gap-2 mb-3">
                                     <span class="text-blue-400">ℹ️</span>
-                                    <span class="text-sm text-slate-400">系统：{{ systemInfo?.os || '加载中' }} ({{ systemInfo?.arch || '?' }})</span>
+                                    <span class="text-sm text-slate-400">本机登录模式</span>
                                 </div>
-                                <div v-if="systemInfo?.users">
-                                    <label class="block text-sm text-slate-400 mb-2">选择登录用户</label>
-                                    <select v-model="localUsername"
-                                            class="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500">
-                                        <option value="">-- 选择用户 (使用 su 登录) --</option>
-                                        <option v-for="u in systemInfo.users" :key="u.username" :value="u.username">
-                                            {{ u.username }} ({{ u.shell }})
-                                        </option>
-                                    </select>
-                                    <p class="mt-2 text-xs text-slate-500">
-                                        💡 选择用户后，将在终端输入该用户的密码。当前运行用户：{{ localUser?.username || '?' }}
-                                    </p>
-                                </div>
+                                <p class="text-xs text-slate-500">
+                                    💡 点击连接后，将显示系统登录界面，请输入用户名和密码。
+                                </p>
                             </div>
                         </template>
                     </div>
@@ -241,6 +231,6 @@
     <script src="/vendor/vue.global.prod.js"></script>
     <script src="/vendor/xterm.min.js"></script>
     <script src="/vendor/xterm-addon-fit.min.js"></script>
-    <script src="/js/app.js"></script>
+    <script src="/js/app.js?v=20260307"></script>
 </body>
 </html>

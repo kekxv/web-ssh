@@ -79,12 +79,6 @@ func main() {
 	})
 
 	// HTTP Long Polling routes (fallback for WebSocket)
-	r.GET("/api/local/user", func(c *gin.Context) {
-		handlers.GetCurrentUser(c.Writer, c.Request)
-	})
-	r.GET("/api/local/users", func(c *gin.Context) {
-		handlers.GetSystemUsers(c.Writer, c.Request)
-	})
 	r.POST("/api/local/connect", func(c *gin.Context) {
 		handlers.LocalSessionRequest(c.Writer, c.Request, terminalHandler)
 	})
