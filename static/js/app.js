@@ -141,10 +141,10 @@ createApp({
                 if (this.connectionMode === 'local' && this.useHttpFallback) {
                     this.sendHttpInput(data);
                 } else if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-                    this.ws.send(JSON.stringify({
-                        type: 'input',
-                        data: data
-                    }));
+                    // Use binary message for input data
+                    const encoder = new TextEncoder();
+                    const message = JSON.stringify({ type: 'input', data: data });
+                    this.ws.send(encoder.encode(message));
                 }
             });
         },
@@ -402,11 +402,14 @@ createApp({
                 // Calculate terminal size after connection
                 this.fitAddon.fit();
                 const dimensions = this.getTerminalDimensions();
-                this.ws.send(JSON.stringify({
+                // Use binary message for resize
+                const encoder = new TextEncoder();
+                const message = JSON.stringify({
                     type: 'resize',
                     cols: dimensions.cols,
                     rows: dimensions.rows
-                }));
+                });
+                this.ws.send(encoder.encode(message));
             };
 
             this.ws.onmessage = (event) => {
