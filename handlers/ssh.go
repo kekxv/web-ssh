@@ -1,11 +1,14 @@
 package handlers
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"sync"
@@ -68,6 +71,64 @@ func DecryptPassword(encryptedBase64 string) (string, error) {
 	decrypted, err := rsa.DecryptOAEP(sha256.New(), rand.Reader, keyPair.PrivateKey, encryptedData, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to decrypt: %v", err)
+	}
+
+	return string(decrypted), nil
+}
+
+// DecryptData decrypts hybrid AES-RSA encrypted data
+// Format: keyLength(4) + encryptedAESKey + iv(12) + encryptedData
+func DecryptData(encryptedBase64 string) (string, error) {
+	keyPair := GetKeyPair()
+
+	encryptedData, err := base64.StdEncoding.DecodeString(encryptedBase64)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode base64: %v", err)
+	}
+
+	// Read key length
+	if len(encryptedData) < 4 {
+		return "", fmt.Errorf("data too short")
+	}
+	keyLength := int(binary.LittleEndian.Uint32(encryptedData[0:4]))
+
+	// Extract encrypted AES key
+	if len(encryptedData) < 4+keyLength {
+		return "", fmt.Errorf("data too short for key")
+	}
+	encryptedAESKey := encryptedData[4 : 4+keyLength]
+
+	// RSA decrypt AES key
+	aesKeyBytes, err := rsa.DecryptOAEP(sha256.New(), rand.Reader, keyPair.PrivateKey, encryptedAESKey, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to decrypt AES key: %v", err)
+	}
+
+	// Extract IV
+	ivStart := 4 + keyLength
+	if len(encryptedData) < ivStart+12 {
+		return "", fmt.Errorf("data too short for IV")
+	}
+	iv := encryptedData[ivStart : ivStart+12]
+
+	// Extract encrypted content
+	contentStart := ivStart + 12
+	encryptedContent := encryptedData[contentStart:]
+
+	// AES decrypt
+	block, err := aes.NewCipher(aesKeyBytes)
+	if err != nil {
+		return "", fmt.Errorf("failed to create AES cipher: %v", err)
+	}
+
+	aesGCM, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", fmt.Errorf("failed to create GCM: %v", err)
+	}
+
+	decrypted, err := aesGCM.Open(nil, iv, encryptedContent, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to decrypt content: %v", err)
 	}
 
 	return string(decrypted), nil

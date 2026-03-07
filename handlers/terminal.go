@@ -313,45 +313,55 @@ func (ts *TerminalSession) Close() error {
 func ConnectSSH(w http.ResponseWriter, r *http.Request, sm *SSHSessionManager) string {
 	var config models.SSHConnectionConfig
 	if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
+		log.Printf("Failed to decode request: %v", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return ""
 	}
 
+	log.Printf("Received config: host=%s, port=%d, user=%s, hasPassword=%v, hasEncryptedPassword=%v, hasPrivateKey=%v, hasEncryptedPrivateKey=%v",
+		config.Host, config.Port, config.Username,
+		config.Password != "", config.EncryptedPassword != "",
+		config.PrivateKey != "", config.EncryptedPrivateKey != "")
+
 	// Decrypt password if it's encrypted
 	if config.EncryptedPassword != "" {
-		password, err := DecryptPassword(config.EncryptedPassword)
+		password, err := DecryptData(config.EncryptedPassword)
 		if err != nil {
+			log.Printf("Failed to decrypt password: %v", err)
 			http.Error(w, fmt.Sprintf("Failed to decrypt password: %v", err), http.StatusBadRequest)
 			return ""
 		}
 		config.Password = password
-		config.EncryptedPassword = "" // Clear encrypted version
+		log.Printf("Password decrypted successfully")
 	}
 
 	// Decrypt private key if it's encrypted
 	if config.EncryptedPrivateKey != "" {
-		privateKey, err := DecryptPassword(config.EncryptedPrivateKey)
+		privateKey, err := DecryptData(config.EncryptedPrivateKey)
 		if err != nil {
+			log.Printf("Failed to decrypt private key: %v", err)
 			http.Error(w, fmt.Sprintf("Failed to decrypt private key: %v", err), http.StatusBadRequest)
 			return ""
 		}
 		config.PrivateKey = privateKey
-		config.EncryptedPrivateKey = "" // Clear encrypted version
+		log.Printf("Private key decrypted successfully")
 	}
 
 	// Decrypt passphrase if it's encrypted
 	if config.EncryptedPassphrase != "" {
-		passphrase, err := DecryptPassword(config.EncryptedPassphrase)
+		passphrase, err := DecryptData(config.EncryptedPassphrase)
 		if err != nil {
+			log.Printf("Failed to decrypt passphrase: %v", err)
 			http.Error(w, fmt.Sprintf("Failed to decrypt passphrase: %v", err), http.StatusBadRequest)
 			return ""
 		}
 		config.Passphrase = passphrase
-		config.EncryptedPassphrase = "" // Clear encrypted version
+		log.Printf("Passphrase decrypted successfully")
 	}
 
 	client, err := CreateSSHClient(&config)
 	if err != nil {
+		log.Printf("Failed to create SSH client: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return ""
 	}

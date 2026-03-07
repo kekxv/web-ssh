@@ -314,6 +314,36 @@ func CreateSSHSessionForSFTP(w http.ResponseWriter, r *http.Request, sm *SSHSess
 		return ""
 	}
 
+	// Decrypt password if it's encrypted
+	if config.EncryptedPassword != "" {
+		password, err := DecryptData(config.EncryptedPassword)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to decrypt password: %v", err), http.StatusBadRequest)
+			return ""
+		}
+		config.Password = password
+	}
+
+	// Decrypt private key if it's encrypted
+	if config.EncryptedPrivateKey != "" {
+		privateKey, err := DecryptData(config.EncryptedPrivateKey)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to decrypt private key: %v", err), http.StatusBadRequest)
+			return ""
+		}
+		config.PrivateKey = privateKey
+	}
+
+	// Decrypt passphrase if it's encrypted
+	if config.EncryptedPassphrase != "" {
+		passphrase, err := DecryptData(config.EncryptedPassphrase)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to decrypt passphrase: %v", err), http.StatusBadRequest)
+			return ""
+		}
+		config.Passphrase = passphrase
+	}
+
 	client, err := CreateSSHClient(&config)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

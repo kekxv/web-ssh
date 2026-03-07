@@ -1,39 +1,63 @@
 const { createApp } = Vue;
 
-// RSA encryption helper
-async function encryptPassword(publicKeyBase64, password) {
-    // Import the public key
-    const binaryPublicKey = Uint8Array.from(atob(publicKeyBase64), c => c.charCodeAt(0));
-
-    const publicKey = await crypto.subtle.importKey(
-        'spki',
-        binaryPublicKey,
-        {
-            name: 'RSA-OAEP',
-            hash: 'SHA-256'
-        },
+// 使用 AES 混合加密方案，因为 RSA 有长度限制
+async function encryptData(publicKeyBase64, data) {
+    // 1. 生成随机 AES 密钥
+    const aesKey = await crypto.subtle.generateKey(
+        { name: 'AES-GCM', length: 256 },
         true,
         ['encrypt']
     );
 
-    // Encode password
-    const encoder = new TextEncoder();
-    const passwordData = encoder.encode(password);
+    // 2. 生成随机 IV
+    const iv = crypto.getRandomValues(new Uint8Array(12));
 
-    // Encrypt
-    const encrypted = await crypto.subtle.encrypt(
-        {
-            name: 'RSA-OAEP'
-        },
-        publicKey,
-        passwordData
+    // 3. 使用 AES 加密数据
+    const encoder = new TextEncoder();
+    const dataBuffer = encoder.encode(data);
+    const encryptedData = await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv: iv },
+        aesKey,
+        dataBuffer
     );
 
-    // Convert to base64
-    const encryptedArray = new Uint8Array(encrypted);
+    // 4. 导出 AES 密钥
+    const rawKey = await crypto.subtle.exportKey('raw', aesKey);
+
+    // 5. 使用 RSA 公钥加密 AES 密钥
+    const binaryPublicKey = Uint8Array.from(atob(publicKeyBase64), c => c.charCodeAt(0));
+    const publicKey = await crypto.subtle.importKey(
+        'spki',
+        binaryPublicKey,
+        { name: 'RSA-OAEP', hash: 'SHA-256' },
+        true,
+        ['encrypt']
+    );
+
+    const encryptedKey = await crypto.subtle.encrypt(
+        { name: 'RSA-OAEP' },
+        publicKey,
+        rawKey
+    );
+
+    // 6. 返回格式：encryptedKey(256 字节) + iv(12 字节) + encryptedData
+    const encryptedKeyArray = new Uint8Array(encryptedKey);
+    const encryptedDataArray = new Uint8Array(encryptedData);
+
+    // 组合：keyLength(4 字节) + encryptedKey + iv + encryptedData
+    const keyLength = encryptedKeyArray.length;
+    const keyLengthBytes = new Uint8Array(new Uint32Array([keyLength]).buffer);
+
+    const result = new Uint8Array(4 + keyLength + 12 + encryptedDataArray.length);
+    result.set(keyLengthBytes, 0);
+    result.set(encryptedKeyArray, 4);
+    result.set(iv, 4 + keyLength);
+    result.set(encryptedDataArray, 4 + keyLength + 12);
+
+    // 转为 base64
     let binary = '';
-    for (let i = 0; i < encryptedArray.byteLength; i++) {
-        binary += String.fromCharCode(encryptedArray[i]);
+    for (let i = 0; i < result.length; i++) {
+        binary += String.fromCharCode(result[i]);
     }
     return btoa(binary);
 }
@@ -141,6 +165,8 @@ createApp({
         },
 
         async connectSSH() {
+            console.log('Starting SSH connection...');
+
             // 验证输入
             if (this.authMethod === 'password' && !this.config.password) {
                 alert('请输入密码');
@@ -153,8 +179,16 @@ createApp({
 
             try {
                 // 先获取公钥
+                console.log('Fetching public key...');
                 const keyResponse = await fetch('/api/public-key');
+                console.log('Public key response:', keyResponse.status);
+
+                if (!keyResponse.ok) {
+                    throw new Error('Failed to get public key');
+                }
+
                 const keyData = await keyResponse.json();
+                console.log('Got public key:', keyData.public_key ? 'yes' : 'no');
 
                 // 创建要发送的配置
                 let configToSend = {
@@ -165,21 +199,29 @@ createApp({
 
                 // 加密密码字段（如果存在）
                 if (this.config.password) {
-                    const encryptedPassword = await encryptPassword(keyData.public_key, this.config.password);
+                    console.log('Encrypting password...');
+                    const encryptedPassword = await encryptData(keyData.public_key, this.config.password);
                     configToSend.encryptedPassword = encryptedPassword;
+                    console.log('Password encrypted, length:', encryptedPassword.length);
                 }
 
                 // 加密私钥字段（如果存在）
                 if (this.config.privateKey) {
-                    const encryptedPrivateKey = await encryptPassword(keyData.public_key, this.config.privateKey);
+                    console.log('Encrypting private key...');
+                    const encryptedPrivateKey = await encryptData(keyData.public_key, this.config.privateKey);
                     configToSend.encryptedPrivateKey = encryptedPrivateKey;
+                    console.log('Private key encrypted, length:', encryptedPrivateKey.length);
                 }
 
                 // 加密私钥密码字段（如果存在）
                 if (this.config.passphrase) {
-                    const encryptedPassphrase = await encryptPassword(keyData.public_key, this.config.passphrase);
+                    console.log('Encrypting passphrase...');
+                    const encryptedPassphrase = await encryptData(keyData.public_key, this.config.passphrase);
                     configToSend.encryptedPassphrase = encryptedPassphrase;
+                    console.log('Passphrase encrypted, length:', encryptedPassphrase.length);
                 }
+
+                console.log('Sending config:', JSON.stringify(configToSend, null, 2));
 
                 // 使用配置连接
                 const response = await fetch('/api/ssh/connect', {
@@ -187,6 +229,8 @@ createApp({
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(configToSend)
                 });
+
+                console.log('Connect response:', response.status);
 
                 if (!response.ok) {
                     const error = await response.text();
@@ -213,6 +257,7 @@ createApp({
                 this.connectTerminal('ssh');
                 this.connected = true;
             } catch (error) {
+                console.error('SSH connection error:', error);
                 alert('连接失败：' + error.message);
             }
         },
