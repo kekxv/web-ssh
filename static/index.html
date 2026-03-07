@@ -29,10 +29,10 @@
                     <div class="space-y-4">
                         <div>
                             <label class="block text-sm text-slate-400 mb-2">连接模式</label>
-                            <select v-model="connectionMode"
+                            <select v-model="connectionMode" @change="onModeChange"
                                     class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
                                 <option value="ssh">🖥️ SSH 远程连接</option>
-                                <option value="local">💻 本机 Bash ({{ localUser?.username || '加载中...' }}@{{ localUser?.hostname || 'localhost' }})</option>
+                                <option value="local">💻 本机登录</option>
                             </select>
                         </div>
 
@@ -85,6 +85,29 @@
                                            class="flex-1 text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-blue-600 file:text-white hover:file:bg-blue-700 cursor-pointer">
                                 </div>
                             </template>
+                        </template>
+
+                        <!-- 本机登录模式 -->
+                        <template v-if="connectionMode === 'local'">
+                            <div class="bg-slate-900/50 rounded-lg p-4 border border-slate-700">
+                                <div class="flex items-center gap-2 mb-3">
+                                    <span class="text-blue-400">ℹ️</span>
+                                    <span class="text-sm text-slate-400">系统：{{ systemInfo?.os || '加载中' }} ({{ systemInfo?.arch || '?' }})</span>
+                                </div>
+                                <div v-if="systemInfo?.users">
+                                    <label class="block text-sm text-slate-400 mb-2">选择登录用户</label>
+                                    <select v-model="localUsername"
+                                            class="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500">
+                                        <option value="">-- 选择用户 (使用 su 登录) --</option>
+                                        <option v-for="u in systemInfo.users" :key="u.username" :value="u.username">
+                                            {{ u.username }} ({{ u.shell }})
+                                        </option>
+                                    </select>
+                                    <p class="mt-2 text-xs text-slate-500">
+                                        💡 选择用户后，将在终端输入该用户的密码。当前运行用户：{{ localUser?.username || '?' }}
+                                    </p>
+                                </div>
+                            </div>
                         </template>
                     </div>
 

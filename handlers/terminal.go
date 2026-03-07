@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bufio"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,8 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -64,6 +67,7 @@ func NewTerminalHandler(sm *SSHSessionManager) *TerminalHandler {
 func (h *TerminalHandler) HandleTerminal(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.URL.Query().Get("session_id")
 	mode := r.URL.Query().Get("mode") // "ssh" or "local"
+	username := r.URL.Query().Get("username") // optional username for local login
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -87,10 +91,10 @@ func (h *TerminalHandler) HandleTerminal(w http.ResponseWriter, r *http.Request)
 		ts.Close()
 	}()
 
-	log.Printf("Terminal connected: %s (mode: %s)", sessionID, mode)
+	log.Printf("Terminal connected: %s (mode: %s, user: %s)", sessionID, mode, username)
 
 	if mode == "local" {
-		h.handleLocalBash(ts)
+		h.handleLocalBash(ts, username)
 	} else {
 		h.handleSSHSession(ts, sessionID)
 	}
@@ -199,9 +203,9 @@ func (h *TerminalHandler) sshToWS(reader io.Reader, ts *TerminalSession) {
 	}
 }
 
-func (h *TerminalHandler) handleLocalBash(ts *TerminalSession) {
-	// Start local bash shell
-	proc, err := startLocalBash()
+func (h *TerminalHandler) handleLocalBash(ts *TerminalSession, username string) {
+	// Start local bash shell with optional user switch
+	proc, err := startLocalBashWithUser(username)
 	if err != nil {
 		ts.SendError(fmt.Sprintf("Failed to start local bash: %v", err))
 		return
@@ -330,6 +334,23 @@ func startLocalBash() (*os.File, error) {
 	return ptmx, nil
 }
 
+// startLocalBashWithUser starts a login shell with optional user switch using su
+func startLocalBashWithUser(username string) (*os.File, error) {
+	if username == "" {
+		return startLocalBash()
+	}
+
+	// Use su to switch to specified user (will prompt for password)
+	suPath := findSuPath()
+	cmd := exec.Command(suPath, "-", username)
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		log.Printf("Failed to start su to %s: %v, falling back to bash", username, err)
+		return startLocalBash()
+	}
+	return ptmx, nil
+}
+
 // GetCurrentUser returns the current system user info
 func GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 	user, err := user.Current()
@@ -354,27 +375,135 @@ func GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// LocalSessionRequest handles local bash session creation
+// GetSystemUsers returns a list of system users with login shells
+func GetSystemUsers(w http.ResponseWriter, r *http.Request) {
+	file, err := os.Open("/etc/passwd")
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": err.Error(),
+		})
+		return
+	}
+	defer file.Close()
+
+	var users []map[string]string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		parts := strings.Split(line, ":")
+		if len(parts) < 7 {
+			continue
+		}
+
+		username := parts[0]
+		shell := parts[6]
+
+		// 只返回有有效登录 shell 的用户
+		if shell != "/usr/sbin/nologin" && shell != "/bin/false" && shell != "/sbin/nologin" && shell != "" {
+			users = append(users, map[string]string{
+				"username": username,
+				"shell":    shell,
+				"home":     parts[5],
+			})
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"os":       runtime.GOOS,
+		"arch":     runtime.GOARCH,
+		"users":    users,
+		"loginCmd": getLoginCommand(),
+	})
+}
+
+// getLoginCommand returns the appropriate login command for the OS
+func getLoginCommand() string {
+	if runtime.GOOS == "darwin" {
+		return "/usr/bin/login"
+	}
+	return "/bin/login"
+}
+
+// findSuPath returns the path to su command
+func findSuPath() string {
+	paths := []string{"/bin/su", "/usr/bin/su", "/usr/sbin/su"}
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	// Fallback to PATH lookup
+	cmd, err := exec.LookPath("su")
+	if err != nil {
+		return "su"
+	}
+	return cmd
+}
+
+// LocalSessionRequest handles local bash session creation with login
 func LocalSessionRequest(w http.ResponseWriter, r *http.Request, h *TerminalHandler) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
+	// Parse request body for username
+	var req struct {
+		Username string `json:"username,omitempty"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+
 	sessionID := generateSessionID()
 
-	// Start local bash
-	cmd := exec.Command("bash")
-	ptmx, err := pty.Start(cmd)
+	// Start login shell
+	var ptmx *os.File
+	var err error
+
+	if req.Username != "" && req.Username != "root" {
+		// Use su to switch to specified user (prompts for password)
+		suPath := findSuPath()
+		cmd := exec.Command(suPath, "-", req.Username)
+		ptmx, err = pty.Start(cmd)
+		log.Printf("Starting su to user %s: %v", req.Username, err)
+	} else {
+		// Start login shell for current user or root login
+		loginCmd := getLoginCommand()
+		// Check if login command exists and we have permission
+		if _, err := os.Stat(loginCmd); err == nil {
+			// Try login (may require root)
+			cmd := exec.Command(loginCmd, "-f", "root")
+			ptmx, err = pty.Start(cmd)
+			if err != nil {
+				// Fallback to su
+				suPath := findSuPath()
+				cmd = exec.Command(suPath, "-")
+				ptmx, err = pty.Start(cmd)
+			}
+		} else {
+			// Fallback to su
+			suPath := findSuPath()
+			cmd := exec.Command(suPath, "-")
+			ptmx, err = pty.Start(cmd)
+		}
+	}
+
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to start bash: %v", err), http.StatusInternalServerError)
-		return
+		// Final fallback: just start bash
+		cmd := exec.Command("bash")
+		ptmx, err = pty.Start(cmd)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to start shell: %v", err), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	session := &LocalPTYSession{
 		ID:  sessionID,
 		PTY: ptmx,
-		Cmd: cmd,
+		Cmd: nil, // PTY started process
 	}
 
 	h.mu.Lock()
@@ -384,6 +513,7 @@ func LocalSessionRequest(w http.ResponseWriter, r *http.Request, h *TerminalHand
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"session_id": sessionID,
+		"message":    "Login session created. Enter credentials if prompted.",
 	})
 }
 
