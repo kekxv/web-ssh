@@ -152,67 +152,25 @@ createApp({
             }
 
             try {
-                // 如果是密码认证，先获取公钥并加密密码
-                if (this.authMethod === 'password' && this.config.password) {
-                    const keyResponse = await fetch('/api/public-key');
-                    const keyData = await keyResponse.json();
+                // 先获取公钥
+                const keyResponse = await fetch('/api/public-key');
+                const keyData = await keyResponse.json();
 
-                    // 加密密码
-                    const encryptedPassword = await encryptPassword(keyData.public_key, this.config.password);
+                // 创建要发送的配置
+                let configToSend = { ...this.config };
 
-                    // 创建加密后的配置
-                    const encryptedConfig = {
-                        ...this.config,
-                        encryptedPassword: encryptedPassword,
-                        password: '' // 不发送明文密码
-                    };
-
-                    // 使用加密配置连接
-                    const response = await fetch('/api/ssh/connect', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(encryptedConfig)
-                    });
-
-                    if (!response.ok) {
-                        const error = await response.text();
-                        alert('连接失败：' + error);
-                        return;
-                    }
-
-                    const data = await response.json();
-                    this.sessionId = data.session_id;
-
-                    // Connect SFTP
-                    const sftpResponse = await fetch('/api/sftp/connect', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(encryptedConfig)
-                    });
-
-                    if (sftpResponse.ok) {
-                        const sftpData = await sftpResponse.json();
-                        this.sftpSessionId = sftpData.session_id;
-                        this.getDefaultPath();
-                    }
-
-                    this.connectTerminal('ssh');
-                    this.connected = true;
-                } else {
-                    // 私钥认证，直接连接
-                    await this.connectSSHWithKey();
+                // 如果有密码，就加密它
+                if (configToSend.password) {
+                    const encryptedPassword = await encryptPassword(keyData.public_key, configToSend.password);
+                    configToSend.encryptedPassword = encryptedPassword;
+                    configToSend.password = ''; // 清除明文密码
                 }
-            } catch (error) {
-                alert('连接失败：' + error.message);
-            }
-        },
 
-        async connectSSHWithKey() {
-            try {
+                // 使用配置连接
                 const response = await fetch('/api/ssh/connect', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(this.config)
+                    body: JSON.stringify(configToSend)
                 });
 
                 if (!response.ok) {
@@ -228,7 +186,7 @@ createApp({
                 const sftpResponse = await fetch('/api/sftp/connect', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(this.config)
+                    body: JSON.stringify(configToSend)
                 });
 
                 if (sftpResponse.ok) {
