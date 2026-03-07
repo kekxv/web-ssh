@@ -65,6 +65,13 @@ async function encryptData(publicKeyBase64, data) {
 createApp({
     data() {
         return {
+            isLoggedIn: false,
+            currentUser: '',
+            loginForm: {
+                username: '',
+                password: ''
+            },
+            loginError: '',
             connected: false,
             connectionMode: 'ssh',
             authMethod: 'password',
@@ -90,15 +97,140 @@ createApp({
             // HTTP 长连接相关
             useHttpFallback: false,
             httpPollingTimer: null,
-            isLocalMode: false
+            isLocalMode: false,
+            showPasswordModal: false,
+            passwordForm: {
+                oldPassword: '',
+                newPassword: ''
+            },
+            passwordError: '',
+            passwordSuccess: ''
         };
     },
 
     async mounted() {
+        // Check if already logged in
+        await this.checkAuth();
         this.initTerminal();
     },
 
     methods: {
+        async checkAuth() {
+            try {
+                const response = await fetch('/api/auth/check');
+                const data = await response.json();
+                if (data.authenticated) {
+                    this.isLoggedIn = true;
+                    this.currentUser = data.username;
+                }
+            } catch (error) {
+                console.error('Auth check failed:', error);
+            }
+        },
+
+        async login() {
+            try {
+                // Get public key for encryption
+                const keyResponse = await fetch('/api/public-key');
+                const keyData = await keyResponse.json();
+
+                // Encrypt password
+                const encryptedPassword = await encryptData(keyData.public_key, this.loginForm.password);
+
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: this.loginForm.username,
+                        encrypted_password: encryptedPassword
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    this.isLoggedIn = true;
+                    this.currentUser = this.loginForm.username;
+                    this.loginError = '';
+                    this.loginForm.password = '';
+                } else {
+                    this.loginError = data.error || '登录失败，请检查用户名和密码';
+                }
+            } catch (error) {
+                this.loginError = '登录失败：' + error.message;
+            }
+        },
+
+        async logout() {
+            try {
+                await fetch('/api/auth/logout', { method: 'POST' });
+            } catch (error) {
+                console.error('Logout failed:', error);
+            }
+
+            // Clear all state
+            if (this.ws) {
+                this.ws.close();
+            }
+            if (this.httpPollingTimer) {
+                clearTimeout(this.httpPollingTimer);
+            }
+
+            this.isLoggedIn = false;
+            this.currentUser = '';
+            this.connected = false;
+            this.sessionId = '';
+            this.sftpSessionId = '';
+            this.fileList = [];
+            this.loginForm.username = '';
+            this.loginForm.password = '';
+        },
+
+        async changePassword() {
+            this.passwordError = '';
+            this.passwordSuccess = '';
+
+            if (!this.passwordForm.oldPassword || !this.passwordForm.newPassword) {
+                this.passwordError = '请填写旧密码和新密码';
+                return;
+            }
+
+            try {
+                // Get public key for encryption
+                const keyResponse = await fetch('/api/public-key');
+                const keyData = await keyResponse.json();
+
+                // Encrypt passwords
+                const encryptedOldPassword = await encryptData(keyData.public_key, this.passwordForm.oldPassword);
+                const encryptedNewPassword = await encryptData(keyData.public_key, this.passwordForm.newPassword);
+
+                const response = await fetch('/api/auth/change-password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: this.currentUser,
+                        encrypted_old_password: encryptedOldPassword,
+                        encrypted_new_password: encryptedNewPassword
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    this.passwordSuccess = '密码修改成功';
+                    setTimeout(() => {
+                        this.showPasswordModal = false;
+                        this.passwordForm.oldPassword = '';
+                        this.passwordForm.newPassword = '';
+                        this.passwordSuccess = '';
+                    }, 1500);
+                } else {
+                    this.passwordError = data.error || '修改失败';
+                }
+            } catch (error) {
+                this.passwordError = '修改失败：' + error.message;
+            }
+        },
 
         initTerminal() {
             this.terminal = new Terminal({
@@ -266,9 +398,9 @@ createApp({
             this.isLocalMode = false;
             this.useHttpFallback = false;
 
-            // 先尝试 WebSocket 连接
+            // 先尝试 WebSocket 连接（通过 Cookie 认证）
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${window.location.host}/ws/terminal?session_id=local&mode=local`;
+            const wsUrl = `${protocol}//${window.location.host}/ws/terminal?mode=local`;
 
             // 创建临时 WebSocket 测试连接
             const testWs = new WebSocket(wsUrl);
@@ -298,8 +430,8 @@ createApp({
 
             // 设置本地模式并获取默认路径
             this.isLocalMode = true;
-            this.currentPath = '.';
-            this.defaultPath = '.';
+            this.currentPath = '~';  // 使用 ~ 表示 home 目录
+            this.defaultPath = '~';
             this.connected = true;
             this.loadFileList();
         },
@@ -397,7 +529,11 @@ createApp({
 
         connectTerminal(mode) {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            let wsUrl = `${protocol}//${window.location.host}/ws/terminal?session_id=${this.sessionId}&mode=${mode}`;
+            // SSH 模式需要传递 session_id，本地模式使用 Cookie 认证
+            let wsUrl = `${protocol}//${window.location.host}/ws/terminal?mode=${mode}`;
+            if (mode === 'ssh' && this.sessionId) {
+                wsUrl += `&session_id=${encodeURIComponent(this.sessionId)}`;
+            }
 
             this.ws = new WebSocket(wsUrl);
             // Set binary type to arraybuffer for proper handling
@@ -529,6 +665,10 @@ createApp({
 
                 if (data.success) {
                     this.fileList = data.data || [];
+                    // 更新当前路径（本地模式）
+                    if (this.isLocalMode && data.path) {
+                        this.currentPath = data.path;
+                    }
                 } else {
                     alert(data.error || '加载文件列表失败');
                 }

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -204,28 +205,14 @@ func (h *TerminalHandler) sshToWS(reader io.Reader, ts *TerminalSession) {
 }
 
 func (h *TerminalHandler) handleLocalBash(ts *TerminalSession, username string) {
-	// Use /usr/bin/login for macOS or /bin/login for Linux
-	// This provides the proper login prompt with username and password
-	loginCmd := "/usr/bin/login"
-	if _, err := os.Stat(loginCmd); err != nil {
-		loginCmd = "/bin/login"
-	}
-
-	// Start login - will prompt for username and password
-	// -p: preserve environment
-	cmd := exec.Command(loginCmd, "-p")
+	// 直接使用 bash，因为用户已经通过 Web 登录认证
+	cmd := exec.Command("bash", "--login")
 	proc, err := pty.Start(cmd)
-	log.Printf("Starting %s via WebSocket: %v", loginCmd, err)
+	log.Printf("Starting local bash: %v", err)
 
 	if err != nil {
-		// Fallback to bash if login fails
-		log.Printf("Login failed: %v, falling back to bash", err)
-		cmd = exec.Command("bash", "--login")
-		proc, err = pty.Start(cmd)
-		if err != nil {
-			ts.SendError(fmt.Sprintf("Failed to start local bash: %v", err))
-			return
-		}
+		ts.SendError(fmt.Sprintf("Failed to start local bash: %v", err))
+		return
 	}
 
 	ts.LocalProc = proc
@@ -381,10 +368,6 @@ func ConnectSSH(w http.ResponseWriter, r *http.Request, sm *SSHSessionManager) s
 	return sessionID
 }
 
-func generateSessionID() string {
-	return fmt.Sprintf("session_%d", time.Now().UnixNano())
-}
-
 // startLocalBash starts a login bash process with PTY
 func startLocalBash() (*os.File, error) {
 	cmd := exec.Command("bash", "--login")
@@ -492,32 +475,14 @@ func LocalSessionRequest(w http.ResponseWriter, r *http.Request, h *TerminalHand
 
 	sessionID := generateSessionID()
 
-	// Use /usr/bin/login for macOS or /bin/login for Linux
-	// This provides the proper login prompt with username and password
-	var ptmx *os.File
-	var err error
-
-	loginCmd := "/usr/bin/login"
-	if _, err := os.Stat(loginCmd); err != nil {
-		loginCmd = "/bin/login"
-	}
-
-	// Start login without -f flag to require password authentication
-	// -p: preserve environment
-	// The login program will prompt for username and password
-	cmd := exec.Command(loginCmd, "-p")
-	ptmx, err = pty.Start(cmd)
-	log.Printf("Starting %s: %v", loginCmd, err)
+	// 直接使用 bash，因为用户已经通过 Web 登录认证
+	cmd := exec.Command("bash", "--login")
+	ptmx, err := pty.Start(cmd)
+	log.Printf("Starting local bash: %v", err)
 
 	if err != nil {
-		// Fallback to bash if login fails
-		log.Printf("Login failed: %v, falling back to bash", err)
-		cmd = exec.Command("bash", "--login")
-		ptmx, err = pty.Start(cmd)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Failed to start shell: %v", err), http.StatusInternalServerError)
-			return
-		}
+		http.Error(w, fmt.Sprintf("Failed to start shell: %v", err), http.StatusInternalServerError)
+		return
 	}
 
 	session := &LocalPTYSession{
@@ -533,7 +498,7 @@ func LocalSessionRequest(w http.ResponseWriter, r *http.Request, h *TerminalHand
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"session_id": sessionID,
-		"message":    "Login session created. Enter credentials if prompted.",
+		"message":    "Local bash session created.",
 	})
 }
 
@@ -665,11 +630,31 @@ func LocalSessionClose(w http.ResponseWriter, r *http.Request, h *TerminalHandle
 // LocalFileList handles local file listing
 func LocalFileList(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
-	if path == "" {
-		path = "."
+	if path == "" || path == "." {
+		// 默认使用用户 home 目录
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			homeDir = "/"
+		}
+		path = homeDir
+	} else if path == "~" {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			homeDir = "/"
+		}
+		path = homeDir
 	}
 
-	entries, err := os.ReadDir(path)
+	// 转为绝对路径
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	entries, err := os.ReadDir(absPath)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -693,7 +678,7 @@ func LocalFileList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "data": files})
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "data": files, "path": absPath})
 }
 
 // LocalFileDownload handles local file download
