@@ -328,6 +328,28 @@ func ConnectSSH(w http.ResponseWriter, r *http.Request, sm *SSHSessionManager) s
 		config.EncryptedPassword = "" // Clear encrypted version
 	}
 
+	// Decrypt private key if it's encrypted
+	if config.EncryptedPrivateKey != "" {
+		privateKey, err := DecryptPassword(config.EncryptedPrivateKey)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to decrypt private key: %v", err), http.StatusBadRequest)
+			return ""
+		}
+		config.PrivateKey = privateKey
+		config.EncryptedPrivateKey = "" // Clear encrypted version
+	}
+
+	// Decrypt passphrase if it's encrypted
+	if config.EncryptedPassphrase != "" {
+		passphrase, err := DecryptPassword(config.EncryptedPassphrase)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to decrypt passphrase: %v", err), http.StatusBadRequest)
+			return ""
+		}
+		config.Passphrase = passphrase
+		config.EncryptedPassphrase = "" // Clear encrypted version
+	}
+
 	client, err := CreateSSHClient(&config)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

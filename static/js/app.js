@@ -157,13 +157,28 @@ createApp({
                 const keyData = await keyResponse.json();
 
                 // 创建要发送的配置
-                let configToSend = { ...this.config };
+                let configToSend = {
+                    host: this.config.host,
+                    port: this.config.port,
+                    username: this.config.username
+                };
 
-                // 如果有密码，就加密它
-                if (configToSend.password) {
-                    const encryptedPassword = await encryptPassword(keyData.public_key, configToSend.password);
+                // 加密密码字段（如果存在）
+                if (this.config.password) {
+                    const encryptedPassword = await encryptPassword(keyData.public_key, this.config.password);
                     configToSend.encryptedPassword = encryptedPassword;
-                    configToSend.password = ''; // 清除明文密码
+                }
+
+                // 加密私钥字段（如果存在）
+                if (this.config.privateKey) {
+                    const encryptedPrivateKey = await encryptPassword(keyData.public_key, this.config.privateKey);
+                    configToSend.encryptedPrivateKey = encryptedPrivateKey;
+                }
+
+                // 加密私钥密码字段（如果存在）
+                if (this.config.passphrase) {
+                    const encryptedPassphrase = await encryptPassword(keyData.public_key, this.config.passphrase);
+                    configToSend.encryptedPassphrase = encryptedPassphrase;
                 }
 
                 // 使用配置连接

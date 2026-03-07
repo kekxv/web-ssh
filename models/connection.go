@@ -8,7 +8,9 @@ type SSHConnectionConfig struct {
 	Password          string `json:"password,omitempty"`
 	EncryptedPassword string `json:"encryptedPassword,omitempty"`
 	PrivateKey        string `json:"privateKey,omitempty"`
+	EncryptedPrivateKey string `json:"encryptedPrivateKey,omitempty"`
 	Passphrase        string `json:"passphrase,omitempty"`
+	EncryptedPassphrase string `json:"encryptedPassphrase,omitempty"`
 }
 
 // TerminalMessage represents a WebSocket message for terminal
