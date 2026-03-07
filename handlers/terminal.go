@@ -342,12 +342,30 @@ func startLocalBashWithUser(username string) (*os.File, error) {
 
 	// Use su to switch to specified user (will prompt for password)
 	suPath := findSuPath()
-	cmd := exec.Command(suPath, "-", username)
+
+	// Create the command
+	var cmd *exec.Cmd
+	if runtime.GOOS == "darwin" {
+		// macOS: su requires -l for login shell
+		cmd = exec.Command(suPath, "-l", username)
+	} else {
+		// Linux: su - username
+		cmd = exec.Command(suPath, "-", username)
+	}
+
+	// Start the command with PTY
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
-		log.Printf("Failed to start su to %s: %v, falling back to bash", username, err)
+		log.Printf("Failed to start su for %s: %v, falling back to bash", username, err)
 		return startLocalBash()
 	}
+
+	// Get initial terminal size from stdout
+	winsize, err := pty.GetsizeFull(os.Stdin)
+	if err == nil && winsize != nil {
+		pty.Setsize(ptmx, winsize)
+	}
+
 	return ptmx, nil
 }
 
