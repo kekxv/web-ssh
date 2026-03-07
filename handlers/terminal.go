@@ -317,6 +317,17 @@ func ConnectSSH(w http.ResponseWriter, r *http.Request, sm *SSHSessionManager) s
 		return ""
 	}
 
+	// Decrypt password if it's encrypted
+	if config.EncryptedPassword != "" {
+		password, err := DecryptPassword(config.EncryptedPassword)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to decrypt password: %v", err), http.StatusBadRequest)
+			return ""
+		}
+		config.Password = password
+		config.EncryptedPassword = "" // Clear encrypted version
+	}
+
 	client, err := CreateSSHClient(&config)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -373,6 +384,27 @@ func GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 		"gid":      user.Gid,
 		"home":     user.HomeDir,
 		"hostname": hostname,
+	})
+}
+
+// GetPublicKey returns the RSA public key for password encryption
+func GetPublicKey(w http.ResponseWriter, r *http.Request) {
+	pubDER, err := GetPublicKeyPEM()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	// Return as base64 encoded DER
+	pubBase64 := base64.StdEncoding.EncodeToString(pubDER)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"public_key": pubBase64,
 	})
 }
 

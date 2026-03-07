@@ -1,6 +1,11 @@
 package handlers
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"sync"
@@ -9,6 +14,64 @@ import (
 	"golang.org/x/crypto/ssh"
 	"web-ssh/models"
 )
+
+// KeyPair holds RSA key pair
+type KeyPair struct {
+	PrivateKey *rsa.PrivateKey
+	PublicKey  *rsa.PublicKey
+}
+
+// Global key pair for password encryption
+var (
+	globalKeyPair *KeyPair
+	keyOnce       sync.Once
+)
+
+// initKeyPair initializes the global RSA key pair
+func initKeyPair() {
+	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to generate RSA key: %v", err))
+	}
+	globalKeyPair = &KeyPair{
+		PrivateKey: privKey,
+		PublicKey:  &privKey.PublicKey,
+	}
+}
+
+// GetKeyPair returns the global key pair, initializing if needed
+func GetKeyPair() *KeyPair {
+	keyOnce.Do(initKeyPair)
+	return globalKeyPair
+}
+
+// GetPublicKeyPEM returns the public key in PEM format
+func GetPublicKeyPEM() ([]byte, error) {
+	keyPair := GetKeyPair()
+	pubDER, err := x509.MarshalPKIXPublicKey(keyPair.PublicKey)
+	if err != nil {
+		return nil, err
+	}
+	return pubDER, nil
+}
+
+// DecryptPassword decrypts a base64-encoded RSA-encrypted password
+func DecryptPassword(encryptedBase64 string) (string, error) {
+	keyPair := GetKeyPair()
+
+	encryptedData, err := base64.StdEncoding.DecodeString(encryptedBase64)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode base64: %v", err)
+	}
+
+	// Use OAEP with SHA256
+	decrypted, err := rsa.DecryptOAEP(sha256.New(), rand.Reader, keyPair.PrivateKey, encryptedData, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to decrypt: %v", err)
+	}
+
+	return string(decrypted), nil
+}
 
 // SSHSessionManager manages SSH sessions
 type SSHSessionManager struct {

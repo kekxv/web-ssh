@@ -1,5 +1,43 @@
 const { createApp } = Vue;
 
+// RSA encryption helper
+async function encryptPassword(publicKeyBase64, password) {
+    // Import the public key
+    const binaryPublicKey = Uint8Array.from(atob(publicKeyBase64), c => c.charCodeAt(0));
+
+    const publicKey = await crypto.subtle.importKey(
+        'spki',
+        binaryPublicKey,
+        {
+            name: 'RSA-OAEP',
+            hash: 'SHA-256'
+        },
+        true,
+        ['encrypt']
+    );
+
+    // Encode password
+    const encoder = new TextEncoder();
+    const passwordData = encoder.encode(password);
+
+    // Encrypt
+    const encrypted = await crypto.subtle.encrypt(
+        {
+            name: 'RSA-OAEP'
+        },
+        publicKey,
+        passwordData
+    );
+
+    // Convert to base64
+    const encryptedArray = new Uint8Array(encrypted);
+    let binary = '';
+    for (let i = 0; i < encryptedArray.byteLength; i++) {
+        binary += String.fromCharCode(encryptedArray[i]);
+    }
+    return btoa(binary);
+}
+
 createApp({
     data() {
         return {
@@ -114,6 +152,63 @@ createApp({
             }
 
             try {
+                // 如果是密码认证，先获取公钥并加密密码
+                if (this.authMethod === 'password' && this.config.password) {
+                    const keyResponse = await fetch('/api/public-key');
+                    const keyData = await keyResponse.json();
+
+                    // 加密密码
+                    const encryptedPassword = await encryptPassword(keyData.public_key, this.config.password);
+
+                    // 创建加密后的配置
+                    const encryptedConfig = {
+                        ...this.config,
+                        encryptedPassword: encryptedPassword,
+                        password: '' // 不发送明文密码
+                    };
+
+                    // 使用加密配置连接
+                    const response = await fetch('/api/ssh/connect', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(encryptedConfig)
+                    });
+
+                    if (!response.ok) {
+                        const error = await response.text();
+                        alert('连接失败：' + error);
+                        return;
+                    }
+
+                    const data = await response.json();
+                    this.sessionId = data.session_id;
+
+                    // Connect SFTP
+                    const sftpResponse = await fetch('/api/sftp/connect', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(encryptedConfig)
+                    });
+
+                    if (sftpResponse.ok) {
+                        const sftpData = await sftpResponse.json();
+                        this.sftpSessionId = sftpData.session_id;
+                        this.getDefaultPath();
+                    }
+
+                    this.connectTerminal('ssh');
+                    this.connected = true;
+                } else {
+                    // 私钥认证，直接连接
+                    await this.connectSSHWithKey();
+                }
+            } catch (error) {
+                alert('连接失败：' + error.message);
+            }
+        },
+
+        async connectSSHWithKey() {
+            try {
                 const response = await fetch('/api/ssh/connect', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -139,7 +234,6 @@ createApp({
                 if (sftpResponse.ok) {
                     const sftpData = await sftpResponse.json();
                     this.sftpSessionId = sftpData.session_id;
-                    // 获取默认路径（HOME）
                     this.getDefaultPath();
                 }
 

@@ -2,12 +2,13 @@ package models
 
 // SSHConnectionConfig holds SSH connection configuration
 type SSHConnectionConfig struct {
-	Host       string `json:"host"`
-	Port       int    `json:"port"`
-	Username   string `json:"username"`
-	Password   string `json:"password,omitempty"`
-	PrivateKey string `json:"privateKey,omitempty"`
-	Passphrase string `json:"passphrase,omitempty"`
+	Host              string `json:"host"`
+	Port              int    `json:"port"`
+	Username          string `json:"username"`
+	Password          string `json:"password,omitempty"`
+	EncryptedPassword string `json:"encryptedPassword,omitempty"`
+	PrivateKey        string `json:"privateKey,omitempty"`
+	Passphrase        string `json:"passphrase,omitempty"`
 }
 
 // TerminalMessage represents a WebSocket message for terminal

@@ -28,6 +28,11 @@ func main() {
 	// API routes
 	api := r.Group("/api")
 	{
+		// Get public key for encryption
+		api.GET("/public-key", func(c *gin.Context) {
+			handlers.GetPublicKey(c.Writer, c.Request)
+		})
+
 		// SSH connection
 		api.POST("/ssh/connect", func(c *gin.Context) {
 			handlers.ConnectSSH(c.Writer, c.Request, sessionManager)
