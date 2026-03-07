@@ -353,18 +353,18 @@ func startLocalBashWithUser(username string) (*os.File, error) {
 		cmd = exec.Command(suPath, "-", username)
 	}
 
-	// Start the command with PTY
+	// Start the command with PTY - don't try to set ctty from os.Stdin
+	// as it may not be valid when running as a background service
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
 		log.Printf("Failed to start su for %s: %v, falling back to bash", username, err)
 		return startLocalBash()
 	}
 
-	// Get initial terminal size from stdout
-	winsize, err := pty.GetsizeFull(os.Stdin)
-	if err == nil && winsize != nil {
-		pty.Setsize(ptmx, winsize)
-	}
+	// Try to set initial terminal size (80x24 is standard default)
+	// This avoids the "Setctty set but Ctty not valid in child" error on macOS
+	winsize := &pty.Winsize{Rows: 24, Cols: 80}
+	pty.Setsize(ptmx, winsize)
 
 	return ptmx, nil
 }
