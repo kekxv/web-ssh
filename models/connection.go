@@ -2,14 +2,14 @@ package models
 
 // JumpHostConfig holds jump host configuration
 type JumpHostConfig struct {
-	Host              string `json:"host"`
-	Port              int    `json:"port"`
-	Username          string `json:"username"`
-	Password          string `json:"password,omitempty"`
-	EncryptedPassword string `json:"encryptedPassword,omitempty"`
-	PrivateKey        string `json:"privateKey,omitempty"`
+	Host                string `json:"host"`
+	Port                int    `json:"port"`
+	Username            string `json:"username"`
+	Password            string `json:"password,omitempty"`
+	EncryptedPassword   string `json:"encryptedPassword,omitempty"`
+	PrivateKey          string `json:"privateKey,omitempty"`
 	EncryptedPrivateKey string `json:"encryptedPrivateKey,omitempty"`
-	Passphrase        string `json:"passphrase,omitempty"`
+	Passphrase          string `json:"passphrase,omitempty"`
 	EncryptedPassphrase string `json:"encryptedPassphrase,omitempty"`
 }
 

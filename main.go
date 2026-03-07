@@ -20,7 +20,7 @@ func main() {
 	r := gin.Default()
 
 	// Serve static files
-	r.Static("/vendor", "./vendor")
+	r.Static("/vendor", "./static/vendor")
 	r.Static("/js", "./static/js")
 	r.StaticFile("/index.html", "./static/index.html")
 	r.StaticFile("/", "./static/index.html")

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Web SSH - 堡垒机</title>
     <link rel="stylesheet" href="/vendor/xterm.css">
-    <link rel="stylesheet" href="/vendor/tailwind.css">
+    <script src="/vendor/tailwind.js"></script>
     <style>
         body { background: #0f172a; }
         .terminal-container { height: calc(100vh - 48px); }
@@ -56,8 +56,8 @@
 
         <!-- 连接配置模态框 -->
         <div v-if="isLoggedIn && !connected" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
-            <div class="bg-slate-800 rounded-2xl p-8 w-full max-w-md mx-4 shadow-2xl border border-slate-700">
-                <div class="flex items-center justify-between mb-6">
+            <div class="bg-slate-800 rounded-2xl p-8 w-full max-w-md mx-4 shadow-2xl border border-slate-700 max-h-[90vh] overflow-y-auto">
+                <div class="flex items-center justify-between mb-6 sticky top-0 bg-slate-800 pb-4">
                     <h2 class="text-2xl font-bold text-white flex items-center gap-2">
                         <span class="text-3xl">🖥️</span> SSH 连接配置
                     </h2>
@@ -142,7 +142,7 @@
                                     <div v-for="(jump, index) in config.jumpHosts" :key="index"
                                          class="bg-slate-900/50 rounded-lg p-3 border border-slate-700">
                                         <div class="flex items-center justify-between mb-2">
-                                            <span class="text-xs text-slate-500">第 {{ index + 1 }} 层跳板</span>
+                                            <span class="text-xs text-blue-400 font-medium">🔗 第 {{ index + 1 }} 层跳板</span>
                                             <button type="button" @click="removeJumpHost(index)"
                                                     class="text-xs text-red-400 hover:text-red-300">
                                                 🗑️ 删除
@@ -163,9 +163,28 @@
                                                    class="w-full bg-slate-800 border border-slate-600 rounded px-2 py-2 text-xs text-white focus:outline-none focus:border-blue-500">
                                         </div>
                                         <div class="mt-2">
+                                            <select v-model="jump.authMethod" @change="onJumpAuthMethodChange(jump)"
+                                                    class="w-full bg-slate-800 border border-slate-600 rounded px-2 py-2 text-xs text-white focus:outline-none focus:border-blue-500">
+                                                <option value="password">🔑 密码认证</option>
+                                                <option value="key">📜 私钥认证</option>
+                                            </select>
+                                        </div>
+                                        <div v-if="jump.authMethod === 'password'" class="mt-2">
                                             <input type="password" v-model="jump.password" placeholder="密码"
                                                    class="w-full bg-slate-800 border border-slate-600 rounded px-2 py-2 text-xs text-white focus:outline-none focus:border-blue-500">
                                         </div>
+                                        <template v-if="jump.authMethod === 'key'">
+                                            <div class="mt-2">
+                                                <textarea v-model="jump.privateKey"
+                                                          placeholder="-----BEGIN RSA PRIVATE KEY-----..."
+                                                          rows="3"
+                                                          class="w-full bg-slate-800 border border-slate-600 rounded px-2 py-2 text-xs text-white font-mono focus:outline-none focus:border-blue-500 resize-none"></textarea>
+                                            </div>
+                                            <div class="mt-2">
+                                                <input type="password" v-model="jump.passphrase" placeholder="私钥密码 (Passphrase)"
+                                                       class="w-full bg-slate-800 border border-slate-600 rounded px-2 py-2 text-xs text-white focus:outline-none focus:border-blue-500">
+                                            </div>
+                                        </template>
                                     </div>
                                 </div>
                                 <div v-else class="text-xs text-slate-500 bg-slate-900/30 rounded-lg p-3">

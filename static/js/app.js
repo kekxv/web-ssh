@@ -82,7 +82,7 @@ createApp({
                 password: '',
                 privateKey: '',
                 passphrase: '',
-                jumpHosts: []  // 跳板机配置数组
+                jumpHosts: null  // 跳板机配置数组
             },
             sessionId: '',
             sftpSessionId: '',
@@ -365,8 +365,17 @@ createApp({
                             port: jump.port,
                             username: jump.username
                         };
+                        // 加密密码
                         if (jump.password) {
                             encryptedJump.encryptedPassword = await encryptData(keyData.public_key, jump.password);
+                        }
+                        // 加密私钥
+                        if (jump.privateKey) {
+                            encryptedJump.encryptedPrivateKey = await encryptData(keyData.public_key, jump.privateKey);
+                        }
+                        // 加密私钥密码
+                        if (jump.passphrase) {
+                            encryptedJump.encryptedPassphrase = await encryptData(keyData.public_key, jump.passphrase);
                         }
                         configToSend.jumpHosts.push(encryptedJump);
                     }
@@ -883,7 +892,10 @@ createApp({
                 host: '',
                 port: 22,
                 username: '',
-                password: ''
+                password: '',
+                authMethod: 'password',
+                privateKey: '',
+                passphrase: ''
             });
         },
 
@@ -891,6 +903,20 @@ createApp({
         removeJumpHost(index) {
             if (!this.config.jumpHosts) return;
             this.config.jumpHosts.splice(index, 1);
+            // 如果删除后数组为空，设置为 null
+            if (this.config.jumpHosts.length === 0) {
+                this.config.jumpHosts = null;
+            }
+        },
+
+        // 跳板机认证方式切换
+        onJumpAuthMethodChange(jump) {
+            if (jump.authMethod === 'key' && !jump.privateKey) {
+                jump.privateKey = '';
+            }
+            if (jump.authMethod === 'password') {
+                jump.password = jump.password || '';
+            }
         },
 
         // 根据文件扩展名返回图标
