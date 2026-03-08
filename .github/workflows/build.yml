@@ -3,6 +3,8 @@ name: Build and Release
 on:
   push:
     branches: [ main, master ]
+    tags:
+      - 'v*'
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
@@ -17,9 +19,11 @@ jobs:
           - os: linux
             arch: amd64
             binary_name: web-ssh-linux-amd64
+            artifact_name: web-ssh-installer.sh
           - os: windows
             arch: amd64
             binary_name: web-ssh-windows-amd64.exe
+            artifact_name: web-ssh-windows-amd64.exe
 
     steps:
       - name: Checkout code
@@ -39,8 +43,41 @@ jobs:
         run: |
           go build -v -ldflags="-s -w" -o ${{ matrix.binary_name }} .
 
+      - name: Bundle Installer (Linux Only)
+        if: matrix.os == 'linux'
+        run: |
+          cp install.sh web-ssh-installer.sh
+          cat ${{ matrix.binary_name }} >> web-ssh-installer.sh
+          chmod +x web-ssh-installer.sh
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.binary_name }}
-          path: ${{ matrix.binary_name }}
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}
+
+  release:
+    name: Create Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/web-ssh-installer.sh
+            artifacts/web-ssh-windows-amd64.exe
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

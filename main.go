@@ -2,6 +2,8 @@ package main
 
 import (
 	"embed"
+	"flag"
+	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
@@ -23,6 +25,10 @@ func getEmbeddedFile(subFS fs.FS, path string) []byte {
 }
 
 func main() {
+	// Parse command line flags
+	port := flag.Int("port", 8080, "Port to listen on")
+	flag.Parse()
+
 	// Create session manager
 	sessionManager := handlers.NewSSHSessionManager()
 
@@ -73,7 +79,6 @@ func main() {
 		if len(path) > 0 && path[0] == '/' {
 			path = path[1:]
 		}
-		// If it's a known static path prefix, serve from embed
 		if strings.HasPrefix(path, "js/") || strings.HasPrefix(path, "vendor/") || strings.HasPrefix(path, "css/") {
 			data, err := fs.ReadFile(subFS, path)
 			if err == nil {
@@ -88,20 +93,17 @@ func main() {
 			}
 		}
 		
-		// For API routes, let them pass through (if they weren't matched already)
 		if strings.HasPrefix(path, "api/") || strings.HasPrefix(path, "ws/") {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 			return
 		}
 		
-		// Fallback to index.html
 		c.Data(http.StatusOK, "text/html; charset=utf-8", getEmbeddedFile(subFS, "index.html"))
 	})
 
-	// Public API routes (no auth required)
+	// Public API routes
 	publicApi := r.Group("/api")
 	{
-		// Auth endpoints
 		publicApi.POST("/auth/login", func(c *gin.Context) {
 			handlers.HandleLogin(c.Writer, c.Request)
 		})
@@ -114,17 +116,14 @@ func main() {
 		publicApi.POST("/auth/change-password", func(c *gin.Context) {
 			handlers.HandleChangePassword(c.Writer, c.Request)
 		})
-
-		// Get public key for encryption (needed before login)
 		publicApi.GET("/public-key", func(c *gin.Context) {
 			handlers.GetPublicKey(c.Writer, c.Request)
 		})
 	}
 
-	// Protected API routes (auth required)
+	// Protected API routes
 	protectedApi := r.Group("/api")
 	protectedApi.Use(func(c *gin.Context) {
-		// Get session from cookie
 		cookie, err := c.Cookie("session_id")
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
@@ -139,34 +138,25 @@ func main() {
 			c.Abort()
 			return
 		}
-
-		// Add username to context for logging
-		log.Printf("Request by user: %s", session.Username)
 		c.Next()
 	})
 	{
-		// SSH connection
 		protectedApi.POST("/ssh/connect", func(c *gin.Context) {
 			handlers.ConnectSSH(c.Writer, c.Request, sessionManager)
 		})
-
 		protectedApi.POST("/ssh/disconnect", func(c *gin.Context) {
 			sessionID := c.Query("session_id")
 			sessionManager.RemoveSession(sessionID)
 			c.JSON(http.StatusOK, gin.H{"success": true})
 		})
-
-		// SFTP operations
 		protectedApi.POST("/sftp/connect", func(c *gin.Context) {
 			handlers.CreateSSHSessionForSFTP(c.Writer, c.Request, sessionManager)
 		})
-
 		protectedApi.POST("/sftp/disconnect", func(c *gin.Context) {
 			sessionID := c.Query("session_id")
 			sftpHandler.CloseSFTPClient(sessionID)
 			c.JSON(http.StatusOK, gin.H{"success": true})
 		})
-
 		protectedApi.GET("/sftp/list", func(c *gin.Context) {
 			sftpHandler.HandleListDir(c.Writer, c.Request)
 		})
@@ -188,8 +178,6 @@ func main() {
 		protectedApi.POST("/sftp/cd", func(c *gin.Context) {
 			sftpHandler.HandleCd(c.Writer, c.Request)
 		})
-
-		// HTTP Long Polling routes (fallback for WebSocket)
 		protectedApi.POST("/local/connect", func(c *gin.Context) {
 			handlers.LocalSessionRequest(c.Writer, c.Request, terminalHandler)
 		})
@@ -202,8 +190,6 @@ func main() {
 		protectedApi.POST("/local/close", func(c *gin.Context) {
 			handlers.LocalSessionClose(c.Writer, c.Request, terminalHandler)
 		})
-
-		// Local file management routes
 		protectedApi.GET("/local/file/list", func(c *gin.Context) {
 			handlers.LocalFileList(c.Writer, c.Request)
 		})
@@ -225,8 +211,6 @@ func main() {
 		protectedApi.POST("/local/file/cd", func(c *gin.Context) {
 			handlers.LocalFileCd(c.Writer, c.Request)
 		})
-
-		// User management (admin only)
 		protectedApi.POST("/admin/users/add", func(c *gin.Context) {
 			handlers.HandleAddUser(c.Writer, c.Request)
 		})
@@ -238,21 +222,19 @@ func main() {
 		})
 	}
 
-	// WebSocket routes (auth required)
+	// WebSocket routes
 	r.GET("/ws/terminal", func(c *gin.Context) {
 		mode := c.Query("mode")
 		sessionID := c.Query("session_id")
 
 		if mode == "ssh" {
 			if sessionID == "" {
-				log.Printf("WebSocket SSH mode requires session_id parameter")
-				c.JSON(http.StatusUnauthorized, gin.H{"error": "session_id required for SSH mode"})
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "session_id required"})
 				c.Abort()
 				return
 			}
 			cookie, err := c.Cookie("session_id")
 			if err != nil {
-				log.Printf("WebSocket auth failed: no cookie")
 				c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 				c.Abort()
 				return
@@ -260,7 +242,6 @@ func main() {
 			auth := handlers.GetAuthManager()
 			_, ok := auth.GetSession(cookie)
 			if !ok {
-				log.Printf("WebSocket auth failed: invalid session")
 				c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 				c.Abort()
 				return
@@ -268,31 +249,28 @@ func main() {
 		} else {
 			cookie, err := c.Cookie("session_id")
 			if err != nil {
-				log.Printf("WebSocket auth failed: no cookie")
 				c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 				c.Abort()
 				return
 			}
 			auth := handlers.GetAuthManager()
-			session, ok := auth.GetSession(cookie)
+			_, ok := auth.GetSession(cookie)
 			if !ok {
-				log.Printf("WebSocket auth failed: invalid session")
 				c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 				c.Abort()
 				return
 			}
-			log.Printf("WebSocket authenticated for user: %s", session.Username)
 		}
 
 		terminalHandler.HandleTerminal(c.Writer, c.Request)
 	})
 
 	// Start server
-	log.Println("Starting Web SSH server on :8080")
-	log.Println("Default credentials: admin / admin123")
-	log.Println("Open http://localhost:8080 in your browser")
+	addr := fmt.Sprintf(":%d", *port)
+	log.Printf("Starting Web SSH server on %s", addr)
+	log.Println("Open http://localhost" + addr + " in your browser")
 
-	if err := r.Run(":8080"); err != nil {
+	if err := r.Run(addr); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }
