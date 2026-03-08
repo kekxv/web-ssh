@@ -55,8 +55,10 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.artifact_name }}
+          name: ${{ matrix.binary_name }}-files
+          path: |
+            ${{ matrix.binary_name }}
+            ${{ matrix.os == 'linux' && 'web-ssh-installer.sh' || '' }}
 
   release:
     name: Create Release
@@ -77,6 +79,7 @@ jobs:
         with:
           files: |
             artifacts/web-ssh-installer.sh
+            artifacts/web-ssh-linux-amd64
             artifacts/web-ssh-windows-amd64.exe
           draft: false
           prerelease: false
