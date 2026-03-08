@@ -7,16 +7,19 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
 )
 
+const usersFilePath = "users.json"
+
 // User represents a system user
 type User struct {
-	Username  string `json:"username"`
-	Password  string `json:"-"` // Never expose password
-	CreatedAt time.Time `json:"-"`
+	Username  string    `json:"username"`
+	Password  string    `json:"password"` // Hashed password
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // Session represents an authenticated user session
@@ -29,9 +32,10 @@ type Session struct {
 
 // AuthManager manages user authentication and sessions
 type AuthManager struct {
-	users    map[string]*User
-	sessions map[string]*Session
-	mu       sync.RWMutex
+	users          map[string]*User
+	sessions       map[string]*Session
+	sshManager     *SSHSessionManager
+	mu             sync.RWMutex
 }
 
 // Global auth manager
@@ -42,21 +46,57 @@ var (
 
 // getAuthManager returns the global auth manager
 func GetAuthManager() *AuthManager {
+	return authManager
+}
+
+// SetSSHSessionManager sets the SSH session manager and initializes AuthManager
+func SetSSHSessionManager(sm *SSHSessionManager) {
 	authOnce.Do(func() {
 		authManager = &AuthManager{
-			users:    make(map[string]*User),
-			sessions: make(map[string]*Session),
+			users:      make(map[string]*User),
+			sessions:   make(map[string]*Session),
+			sshManager: sm,
 		}
-		// Initialize with default admin user
-		// Default password: admin123
-		hashedPwd := hashPassword("admin123")
-		authManager.users["admin"] = &User{
-			Username:  "admin",
-			Password:  hashedPwd,
-			CreatedAt: time.Now(),
+		
+		// Load users from file or create default
+		if err := authManager.loadUsers(); err != nil {
+			log.Printf("Failed to load users from file, creating default admin: %v", err)
+			// Initialize with default admin user
+			// Default password: admin123
+			hashedPwd := hashPassword("admin123")
+			authManager.users["admin"] = &User{
+				Username:  "admin",
+				Password:  hashedPwd,
+				CreatedAt: time.Now(),
+			}
+			authManager.saveUsers()
 		}
 	})
-	return authManager
+}
+
+// loadUsers loads users from the json file
+func (m *AuthManager) loadUsers() error {
+	data, err := os.ReadFile(usersFilePath)
+	if err != nil {
+		return err
+	}
+	
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return json.Unmarshal(data, &m.users)
+}
+
+// saveUsers saves users to the json file
+func (m *AuthManager) saveUsers() error {
+	m.mu.RLock()
+	data, err := json.MarshalIndent(m.users, "", "  ")
+	m.mu.RUnlock()
+	
+	if err != nil {
+		return err
+	}
+	
+	return os.WriteFile(usersFilePath, data, 0600)
 }
 
 // hashPassword hashes a password using SHA256
@@ -269,7 +309,16 @@ func HandleLogout(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie("session_id")
 	if err == nil {
 		auth := GetAuthManager()
-		auth.DeleteSession(cookie.Value)
+		if auth != nil {
+			session, ok := auth.GetSession(cookie.Value)
+			if ok {
+				// Close all SSH sessions for this user
+				if auth.sshManager != nil {
+					auth.sshManager.CloseUserSessions(session.Username)
+				}
+				auth.DeleteSession(cookie.Value)
+			}
+		}
 
 		// Clear cookie
 		http.SetCookie(w, &http.Cookie{
@@ -381,6 +430,7 @@ func HandleChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	user.Password = hashPassword(newPassword)
 	auth.mu.Unlock()
+	auth.saveUsers()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
@@ -443,6 +493,7 @@ func HandleAddUser(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: time.Now(),
 	}
 	auth.mu.Unlock()
+	auth.saveUsers()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
@@ -517,6 +568,7 @@ func HandleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 	delete(auth.users, username)
 	auth.mu.Unlock()
+	auth.saveUsers()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})

@@ -346,19 +346,34 @@ func ConnectSSH(w http.ResponseWriter, r *http.Request, sm *SSHSessionManager) s
 		log.Printf("Passphrase decrypted successfully")
 	}
 
-	client, err := CreateSSHClient(&config)
+	// Get web username from session
+	var webUsername string
+	cookie, err := r.Cookie("session_id")
+	if err == nil {
+		auth := GetAuthManager()
+		if session, ok := auth.GetSession(cookie.Value); ok {
+			webUsername = session.Username
+		}
+	}
+
+	clients, err := CreateSSHClient(&config)
 	if err != nil {
 		log.Printf("Failed to create SSH client: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return ""
 	}
 
+	targetClient := clients[len(clients)-1]
+	jumpClients := clients[:len(clients)-1]
+
 	sessionID := generateSessionID()
 	session := &SSHSession{
-		ID:         sessionID,
-		Config:     &config,
-		Client:     client,
-		LastActive: time.Now(),
+		ID:          sessionID,
+		Username:    webUsername,
+		Config:      &config,
+		Client:      targetClient,
+		JumpClients: jumpClients,
+		LastActive:  time.Now(),
 	}
 
 	sm.AddSession(sessionID, session)

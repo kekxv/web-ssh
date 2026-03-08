@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"path/filepath"
 	"sync"
@@ -44,8 +45,12 @@ func (h *SFTPHandler) GetSFTPClient(sessionID string) (*sftp.Client, error) {
 		return nil, fmt.Errorf("session not found")
 	}
 
+	log.Printf("Creating SFTP client for session: %s", sessionID)
+
+	// Use the standard sftp.NewClient approach
 	sftpClient, err := sftp.NewClient(sshSession.Client)
 	if err != nil {
+		log.Printf("Failed to create SFTP client: %v", err)
 		return nil, fmt.Errorf("failed to create SFTP client: %v", err)
 	}
 
@@ -53,6 +58,7 @@ func (h *SFTPHandler) GetSFTPClient(sessionID string) (*sftp.Client, error) {
 	h.sftpClients[sessionID] = sftpClient
 	h.mu.Unlock()
 
+	log.Printf("SFTP client created successfully for session: %s", sessionID)
 	return sftpClient, nil
 }
 
@@ -344,18 +350,63 @@ func CreateSSHSessionForSFTP(w http.ResponseWriter, r *http.Request, sm *SSHSess
 		config.Passphrase = passphrase
 	}
 
-	client, err := CreateSSHClient(&config)
+	// Decrypt jump host credentials if needed
+	if config.JumpHosts != nil {
+		for i, jumpHost := range config.JumpHosts {
+			if jumpHost.EncryptedPassword != "" {
+				password, err := DecryptData(jumpHost.EncryptedPassword)
+				if err != nil {
+					http.Error(w, fmt.Sprintf("Failed to decrypt jump host %d password: %v", i+1, err), http.StatusBadRequest)
+					return ""
+				}
+				config.JumpHosts[i].Password = password
+			}
+			if jumpHost.EncryptedPrivateKey != "" {
+				privateKey, err := DecryptData(jumpHost.EncryptedPrivateKey)
+				if err != nil {
+					http.Error(w, fmt.Sprintf("Failed to decrypt jump host %d private key: %v", i+1, err), http.StatusBadRequest)
+					return ""
+				}
+				config.JumpHosts[i].PrivateKey = privateKey
+			}
+			if jumpHost.EncryptedPassphrase != "" {
+				passphrase, err := DecryptData(jumpHost.EncryptedPassphrase)
+				if err != nil {
+					http.Error(w, fmt.Sprintf("Failed to decrypt jump host %d passphrase: %v", i+1, err), http.StatusBadRequest)
+					return ""
+				}
+				config.JumpHosts[i].Passphrase = passphrase
+			}
+		}
+	}
+
+	// Get web username from session
+	var webUsername string
+	cookie, err := r.Cookie("session_id")
+	if err == nil {
+		auth := GetAuthManager()
+		if session, ok := auth.GetSession(cookie.Value); ok {
+			webUsername = session.Username
+		}
+	}
+
+	clients, err := CreateSSHClient(&config)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return ""
 	}
 
+	targetClient := clients[len(clients)-1]
+	jumpClients := clients[:len(clients)-1]
+
 	sessionID := fmt.Sprintf("sftp_%d", time.Now().UnixNano())
 	session := &SSHSession{
-		ID:         sessionID,
-		Config:     &config,
-		Client:     client,
-		LastActive: time.Now(),
+		ID:          sessionID,
+		Username:    webUsername,
+		Config:      &config,
+		Client:      targetClient,
+		JumpClients: jumpClients,
+		LastActive:  time.Now(),
 	}
 
 	sm.AddSession(sessionID, session)

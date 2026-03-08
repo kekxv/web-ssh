@@ -61,9 +61,14 @@
                     <h2 class="text-2xl font-bold text-white flex items-center gap-2">
                         <span class="text-3xl">🖥️</span> SSH 连接配置
                     </h2>
-                    <button @click="logout" class="text-sm text-slate-400 hover:text-white transition-colors">
-                        退出登录
-                    </button>
+                    <div class="flex items-center gap-3">
+                        <button @click="showPasswordModal = true" class="text-sm text-blue-400 hover:text-blue-300 transition-colors">
+                            修改密码
+                        </button>
+                        <button @click="logout" class="text-sm text-slate-400 hover:text-white transition-colors">
+                            退出登录
+                        </button>
+                    </div>
                 </div>
                 <form @submit.prevent="connect">
                     <div class="space-y-4">

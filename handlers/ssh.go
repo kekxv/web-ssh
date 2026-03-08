@@ -142,12 +142,14 @@ type SSHSessionManager struct {
 
 // SSHSession represents an active SSH session
 type SSHSession struct {
-	ID         string
-	Config     *models.SSHConnectionConfig
-	Client     *ssh.Client
-	Session    *ssh.Session
-	LastActive time.Time
-	mu         sync.Mutex
+	ID          string
+	Username    string // The web user who owns this session
+	Config      *models.SSHConnectionConfig
+	Client      *ssh.Client
+	JumpClients []*ssh.Client
+	Session     *ssh.Session
+	LastActive  time.Time
+	mu          sync.Mutex
 }
 
 // NewSSHSessionManager creates a new session manager
@@ -157,15 +159,37 @@ func NewSSHSessionManager() *SSHSessionManager {
 	}
 }
 
-// CreateSSHClient creates a new SSH client from config with jump host support
-func CreateSSHClient(config *models.SSHConnectionConfig) (*ssh.Client, error) {
+// CloseUserSessions closes all SSH sessions belonging to a specific web user
+func (m *SSHSessionManager) CloseUserSessions(username string) {
+	m.mu.Lock()
+	var sessionsToClose []*SSHSession
+	for id, session := range m.sessions {
+		if session.Username == username {
+			sessionsToClose = append(sessionsToClose, session)
+			delete(m.sessions, id)
+		}
+	}
+	m.mu.Unlock()
+
+	for _, session := range sessionsToClose {
+		session.Close()
+	}
+}
+
+// CreateSSHClient creates a new SSH client from config with jump host support.
+// Returns a slice of clients where the last one is the target client.
+func CreateSSHClient(config *models.SSHConnectionConfig) ([]*ssh.Client, error) {
 	// If there are jump hosts, create SSH tunnel through them
 	if len(config.JumpHosts) > 0 {
 		return CreateSSHClientWithJump(config)
 	}
 
 	// Direct connection (no jump hosts)
-	return createDirectConnection(config)
+	client, err := createDirectConnection(config)
+	if err != nil {
+		return nil, err
+	}
+	return []*ssh.Client{client}, nil
 }
 
 // createDirectConnection creates a direct SSH connection
@@ -221,13 +245,14 @@ func getAuthMethods(config *models.SSHConnectionConfig) ([]ssh.AuthMethod, error
 }
 
 // CreateSSHClientWithJump creates SSH connection through jump hosts (supports up to 4 levels)
-func CreateSSHClientWithJump(config *models.SSHConnectionConfig) (*ssh.Client, error) {
+func CreateSSHClientWithJump(config *models.SSHConnectionConfig) ([]*ssh.Client, error) {
 	// Limit jump hosts to 4 levels
 	jumpHosts := config.JumpHosts
 	if len(jumpHosts) > 4 {
 		jumpHosts = jumpHosts[:4]
 	}
 
+	var allClients []*ssh.Client
 	var currentClient *ssh.Client
 	var err error
 
@@ -237,18 +262,21 @@ func CreateSSHClientWithJump(config *models.SSHConnectionConfig) (*ssh.Client, e
 		if jumpHost.EncryptedPassword != "" {
 			jumpHost.Password, err = DecryptData(jumpHost.EncryptedPassword)
 			if err != nil {
+				closeAllClients(allClients)
 				return nil, fmt.Errorf("failed to decrypt jump host %d password: %v", i+1, err)
 			}
 		}
 		if jumpHost.EncryptedPrivateKey != "" {
 			jumpHost.PrivateKey, err = DecryptData(jumpHost.EncryptedPrivateKey)
 			if err != nil {
+				closeAllClients(allClients)
 				return nil, fmt.Errorf("failed to decrypt jump host %d private key: %v", i+1, err)
 			}
 		}
 		if jumpHost.EncryptedPassphrase != "" {
 			jumpHost.Passphrase, err = DecryptData(jumpHost.EncryptedPassphrase)
 			if err != nil {
+				closeAllClients(allClients)
 				return nil, fmt.Errorf("failed to decrypt jump host %d passphrase: %v", i+1, err)
 			}
 		}
@@ -267,6 +295,7 @@ func CreateSSHClientWithJump(config *models.SSHConnectionConfig) (*ssh.Client, e
 			// First jump host - direct connection
 			currentClient, err = createDirectConnection(jumpConfig)
 			if err != nil {
+				closeAllClients(allClients)
 				return nil, fmt.Errorf("failed to connect to jump host %d (%s:%d): %v", i+1, jumpHost.Host, jumpHost.Port, err)
 			}
 		} else {
@@ -274,14 +303,14 @@ func CreateSSHClientWithJump(config *models.SSHConnectionConfig) (*ssh.Client, e
 			jumpAddr := fmt.Sprintf("%s:%d", jumpHost.Host, jumpHost.Port)
 			conn, err := currentClient.Dial("tcp", jumpAddr)
 			if err != nil {
-				currentClient.Close()
+				closeAllClients(allClients)
 				return nil, fmt.Errorf("failed to tunnel to jump host %d (%s): %v", i+1, jumpAddr, err)
 			}
 
 			// Create SSH config for jump host
 			authMethods, err := getAuthMethods(jumpConfig)
 			if err != nil {
-				currentClient.Close()
+				closeAllClients(allClients)
 				return nil, fmt.Errorf("failed to get auth methods for jump host %d: %v", i+1, err)
 			}
 
@@ -295,39 +324,34 @@ func CreateSSHClientWithJump(config *models.SSHConnectionConfig) (*ssh.Client, e
 			// Create SSH client connection over the tunnel
 			ncc, chans, reqs, err := ssh.NewClientConn(conn, jumpAddr, &sshConfig)
 			if err != nil {
-				currentClient.Close()
+				closeAllClients(allClients)
 				return nil, fmt.Errorf("failed to create SSH client for jump host %d: %v", i+1, err)
 			}
 
 			currentClient = ssh.NewClient(ncc, chans, reqs)
 		}
+		allClients = append(allClients, currentClient)
 	}
 
 	// Decrypt target host credentials if needed
 	if config.EncryptedPassword != "" {
 		config.Password, err = DecryptData(config.EncryptedPassword)
 		if err != nil {
-			if currentClient != nil {
-				currentClient.Close()
-			}
+			closeAllClients(allClients)
 			return nil, fmt.Errorf("failed to decrypt target password: %v", err)
 		}
 	}
 	if config.EncryptedPrivateKey != "" {
 		config.PrivateKey, err = DecryptData(config.EncryptedPrivateKey)
 		if err != nil {
-			if currentClient != nil {
-				currentClient.Close()
-			}
+			closeAllClients(allClients)
 			return nil, fmt.Errorf("failed to decrypt target private key: %v", err)
 		}
 	}
 	if config.EncryptedPassphrase != "" {
 		config.Passphrase, err = DecryptData(config.EncryptedPassphrase)
 		if err != nil {
-			if currentClient != nil {
-				currentClient.Close()
-			}
+			closeAllClients(allClients)
 			return nil, fmt.Errorf("failed to decrypt target passphrase: %v", err)
 		}
 	}
@@ -336,14 +360,14 @@ func CreateSSHClientWithJump(config *models.SSHConnectionConfig) (*ssh.Client, e
 	targetAddr := fmt.Sprintf("%s:%d", config.Host, config.Port)
 	conn, err := currentClient.Dial("tcp", targetAddr)
 	if err != nil {
-		currentClient.Close()
+		closeAllClients(allClients)
 		return nil, fmt.Errorf("failed to tunnel to target host (%s): %v", targetAddr, err)
 	}
 
 	// Create SSH config for target host
 	authMethods, err := getAuthMethods(config)
 	if err != nil {
-		currentClient.Close()
+		closeAllClients(allClients)
 		return nil, fmt.Errorf("failed to get auth methods for target host: %v", err)
 	}
 
@@ -357,14 +381,23 @@ func CreateSSHClientWithJump(config *models.SSHConnectionConfig) (*ssh.Client, e
 	// Create final SSH client connection
 	ncc, chans, reqs, err := ssh.NewClientConn(conn, targetAddr, &sshConfig)
 	if err != nil {
-		currentClient.Close()
+		closeAllClients(allClients)
 		return nil, fmt.Errorf("failed to create SSH client for target host: %v", err)
 	}
 
-	// Close the intermediate client (the connection is already established)
-	currentClient.Close()
+	targetClient := ssh.NewClient(ncc, chans, reqs)
+	allClients = append(allClients, targetClient)
 
-	return ssh.NewClient(ncc, chans, reqs), nil
+	return allClients, nil
+}
+
+// closeAllClients closes all clients in the slice
+func closeAllClients(clients []*ssh.Client) {
+	for i := len(clients) - 1; i >= 0; i-- {
+		if clients[i] != nil {
+			clients[i].Close()
+		}
+	}
 }
 
 // AddSession adds a session to the manager
@@ -403,7 +436,7 @@ func (m *SSHSessionManager) ListSessions() []string {
 	return ids
 }
 
-// Close closes the SSH session
+// Close closes the SSH session and all its clients
 func (s *SSHSession) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -413,6 +446,12 @@ func (s *SSHSession) Close() error {
 	}
 	if s.Client != nil {
 		s.Client.Close()
+	}
+	// Close jump host clients in reverse order
+	for i := len(s.JumpClients) - 1; i >= 0; i-- {
+		if s.JumpClients[i] != nil {
+			s.JumpClients[i].Close()
+		}
 	}
 	return nil
 }

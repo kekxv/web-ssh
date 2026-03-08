@@ -1,16 +1,33 @@
 package main
 
 import (
+	"embed"
+	"io/fs"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"web-ssh/handlers"
 )
 
+//go:embed static/*
+var staticFS embed.FS
+
+func getEmbeddedFile(subFS fs.FS, path string) []byte {
+	data, err := fs.ReadFile(subFS, path)
+	if err != nil {
+		return []byte{}
+	}
+	return data
+}
+
 func main() {
 	// Create session manager
 	sessionManager := handlers.NewSSHSessionManager()
+
+	// Initialize AuthManager with session manager
+	handlers.SetSSHSessionManager(sessionManager)
 
 	// Create handlers
 	terminalHandler := handlers.NewTerminalHandler(sessionManager)
@@ -19,11 +36,67 @@ func main() {
 	// Setup Gin
 	r := gin.Default()
 
-	// Serve static files
-	r.Static("/vendor", "./static/vendor")
-	r.Static("/js", "./static/js")
-	r.StaticFile("/index.html", "./static/index.html")
-	r.StaticFile("/", "./static/index.html")
+	// Get the static subdirectory from embedded FS
+	subFS, err := fs.Sub(staticFS, "static")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Serve specific paths or use a custom handler for index.html
+	r.GET("/", func(c *gin.Context) {
+		c.Data(http.StatusOK, "text/html; charset=utf-8", getEmbeddedFile(subFS, "index.html"))
+	})
+	r.GET("/index.html", func(c *gin.Context) {
+		c.Data(http.StatusOK, "text/html; charset=utf-8", getEmbeddedFile(subFS, "index.html"))
+	})
+
+	// Serve JS, Vendor, CSS etc. from embedded FS
+	r.GET("/js/:file", func(c *gin.Context) {
+		file := c.Param("file")
+		c.Data(http.StatusOK, "application/javascript", getEmbeddedFile(subFS, "js/"+file))
+	})
+	r.GET("/vendor/:file", func(c *gin.Context) {
+		file := c.Param("file")
+		content := getEmbeddedFile(subFS, "vendor/"+file)
+		contentType := "text/plain"
+		if strings.HasSuffix(file, ".js") {
+			contentType = "application/javascript"
+		} else if strings.HasSuffix(file, ".css") {
+			contentType = "text/css"
+		}
+		c.Data(http.StatusOK, contentType, content)
+	})
+	
+	// Handle assets that might be in subdirectories of vendor or other folders
+	r.NoRoute(func(c *gin.Context) {
+		path := c.Request.URL.Path
+		if len(path) > 0 && path[0] == '/' {
+			path = path[1:]
+		}
+		// If it's a known static path prefix, serve from embed
+		if strings.HasPrefix(path, "js/") || strings.HasPrefix(path, "vendor/") || strings.HasPrefix(path, "css/") {
+			data, err := fs.ReadFile(subFS, path)
+			if err == nil {
+				contentType := "application/octet-stream"
+				if strings.HasSuffix(path, ".js") {
+					contentType = "application/javascript"
+				} else if strings.HasSuffix(path, ".css") {
+					contentType = "text/css"
+				}
+				c.Data(http.StatusOK, contentType, data)
+				return
+			}
+		}
+		
+		// For API routes, let them pass through (if they weren't matched already)
+		if strings.HasPrefix(path, "api/") || strings.HasPrefix(path, "ws/") {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+			return
+		}
+		
+		// Fallback to index.html
+		c.Data(http.StatusOK, "text/html; charset=utf-8", getEmbeddedFile(subFS, "index.html"))
+	})
 
 	// Public API routes (no auth required)
 	publicApi := r.Group("/api")
@@ -170,8 +243,6 @@ func main() {
 		mode := c.Query("mode")
 		sessionID := c.Query("session_id")
 
-		// SSH 模式：需要从 URL 参数获取 SSH session_id
-		// Local 模式：从 Cookie 获取用户认证 session
 		if mode == "ssh" {
 			if sessionID == "" {
 				log.Printf("WebSocket SSH mode requires session_id parameter")
@@ -179,7 +250,6 @@ func main() {
 				c.Abort()
 				return
 			}
-			// 验证用户已登录（通过 Cookie）
 			cookie, err := c.Cookie("session_id")
 			if err != nil {
 				log.Printf("WebSocket auth failed: no cookie")
@@ -196,7 +266,6 @@ func main() {
 				return
 			}
 		} else {
-			// Local 模式：只验证 Cookie
 			cookie, err := c.Cookie("session_id")
 			if err != nil {
 				log.Printf("WebSocket auth failed: no cookie")
