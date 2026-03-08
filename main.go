@@ -132,7 +132,7 @@ func main() {
 		}
 
 		auth := handlers.GetAuthManager()
-		session, ok := auth.GetSession(cookie)
+		_, ok := auth.GetSession(cookie)
 		if !ok {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "session expired"})
 			c.Abort()
