@@ -41,6 +41,8 @@ jobs:
           GOARCH: ${{ matrix.arch }}
           CGO_ENABLED: 0
         run: |
+          go mod tidy
+          go mod vendor
           go build -v -ldflags="-s -w" -o ${{ matrix.binary_name }} .
 
       - name: Bundle Installer (Linux Only)

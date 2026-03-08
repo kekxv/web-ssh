@@ -1,134 +1,91 @@
 # Web SSH 堡垒机
 
-一个基于 Go 语言的网页版 SSH 堡垒机应用，支持 Web 终端和 SFTP 文件管理。
+一个基于 Go 语言的网页版 SSH 堡垒机应用，支持 Web 终端、多级跳板机、用户持久化和 SFTP 文件管理。
 
-## 功能特性
+## 🌟 核心特性
 
-1. **Web 终端**
-   - 基于 Xterm.js 的终端模拟器
-   - 支持 SSH 远程连接
-   - 支持本机 Bash 模式
+1. **多级跳板机支持**
+   - 支持多达 4 级 SSH 跳板机（Jump Hosts）
+   - 每级跳板机独立配置认证（密码/私钥）
+   - 自动隧道建立，连接稳定
 
-2. **SFTP 文件管理**
-   - 文件列表展示
-   - 文件上传/下载
-   - 目录创建/删除
-   - 文件删除
-   - 目录导航
+2. **用户管理与持久化**
+   - **单文件持久化**：用户信息保存至 `users.json`，重启不丢失
+   - **交互式安全**：支持登录后随时修改 Web 管理员密码
+   - **会话联动**：退出登录自动切断所有关联的 SSH/SFTP 会话
 
-3. **连接管理**
-   - 支持密码认证
-   - 支持私钥认证（可上传或粘贴）
-   - 会话管理
+3. **单文件分发 (Single Binary)**
+   - 使用 Go `embed` 技术将前端所有静态资源直接打入二进制文件
+   - 无需外部静态目录，一个文件即可随处运行
 
-## 技术栈
+4. **Web 终端 & SFTP**
+   - **实时终端**：基于 Xterm.js，支持终端自适应和快捷缩放
+   - **双向同步**：左侧 SFTP 文件管理（上传/下载/删除/新建），右侧实时命令行
+   - **本地模式**：支持直接登录本机 Bash 模式
+
+## 🚀 快速开始
+
+### 方式一：一键安装 (推荐 Linux 用户)
+
+从 GitHub Releases 下载最新的 `web-ssh-installer.sh`：
+
+```bash
+# 下载并执行安装脚本
+sudo bash web-ssh-installer.sh
+```
+
+脚本将自动完成：
+- 交互式设置服务端口和管理员密码
+- 安装至 `/opt/web-ssh`
+- 配置 `systemd` 并设为开机自启
+
+### 方式二：手动编译
+
+需要 **Go 1.25+** 环境：
+
+```bash
+# 1. 克隆代码并安装依赖
+go mod tidy
+
+# 2. 编译为单文件二进制
+go build -ldflags="-s -w" -o web-ssh .
+
+# 3. 运行（可选指定端口）
+./web-ssh -port 8080
+```
+
+## 🔐 账号管理
+
+- **默认账号**：`admin` / `admin123`
+- **修改密码**：登录后在右上角点击“修改密码”或在连接配置界面点击蓝色入口。
+- **持久化**：所有用户配置存储在程序目录下的 `users.json` 中。
+
+## 🛠️ 技术栈
 
 ### 后端
-- Go 1.21+
-- Gin - Web 框架
-- golang.org/x/crypto/ssh - SSH 客户端
-- gorilla/websocket - WebSocket 通信
-- pkg/sftp - SFTP 文件传输
-- kr/pty - PTY 管理（本地 Bash）
+- **Go 1.25** - 核心语言
+- **Gin** - Web 框架
+- **golang.org/x/crypto/ssh** - SSH 协议实现
+- **gorilla/websocket** - 实时通信
+- **pkg/sftp** - SFTP 支持
 
 ### 前端
-- Vue 3 - 响应式框架
-- Xterm.js - 终端模拟器
-- Xterm-addon-fit - 终端自适应
-- CSS Flexbox - 界面布局
+- **Vue 3** - 响应式 UI
+- **Xterm.js** - 终端渲染
+- **Tailwind CSS** - 现代 UI 样式
 
-## 快速开始
+## 📦 GitHub Actions 自动构建
 
-### 1. 安装依赖
+项目配置了自动构建流水线，每次推送标签（Tag 如 `v0.1.0`）都会自动产出：
+- **Linux**：`web-ssh-installer.sh` (全能安装脚本)
+- **Windows**：`web-ssh-windows-amd64.exe` (静态可执行文件)
 
-```bash
-go mod tidy
-```
+## ⚠️ 注意事项
 
-### 2. 编译
+- 生产环境建议通过 Nginx/Caddy 配置 **HTTPS** 访问。
+- `users.json` 包含加密后的密码哈希，请妥善保管。
+- 安装脚本需要 root 权限以配置 `systemd`。
 
-```bash
-go build -o web-ssh .
-```
+## 开源协议
 
-### 3. 运行
-
-```bash
-./web-ssh
-```
-
-### 4. 访问
-
-打开浏览器访问：http://localhost:8080
-
-## 使用说明
-
-### 本机 Bash 模式
-
-1. 选择"本机 Bash"模式
-2. 点击"连接"
-3. 直接在终端执行命令
-
-### SSH 远程连接
-
-1. 选择"SSH 远程连接"模式
-2. 输入服务器信息：
-   - 主机地址
-   - 端口（默认 22）
-   - 用户名
-   - 认证方式（密码/私钥）
-3. 点击"连接"
-4. 左侧显示 SFTP 文件管理器
-5. 右侧显示终端
-
-### SFTP 操作
-
-- **浏览目录**: 双击文件夹
-- **返回上级**: 点击 ⬆️ 按钮
-- **上传文件**: 点击 ⬆️ 图标选择文件
-- **下载文件**: 点击文件旁的 ⬇️ 图标
-- **新建文件夹**: 点击 📁 图标
-- **删除文件**: 点击文件旁的 🗑️ 图标
-
-## 项目结构
-
-```
-web-ssh/
-├── main.go              # 程序入口
-├── go.mod
-├── go.sum
-├── handlers/
-│   ├── ssh.go          # SSH 连接处理
-│   ├── terminal.go     # 终端 WebSocket 处理
-│   └── sftp.go         # SFTP 文件操作
-├── models/
-│   └── connection.go   # 连接配置模型
-└── static/
-    ├── index.html      # 主页面
-    ├── css/
-    │   └── style.css   # 样式
-    └── js/
-        └── app.js      # 前端逻辑
-```
-
-## API 接口
-
-| 方法 | 路径 | 描述 |
-|------|------|------|
-| POST | /api/ssh/connect | 建立 SSH 连接 |
-| POST | /api/ssh/disconnect | 断开 SSH 连接 |
-| POST | /api/sftp/connect | 建立 SFTP 连接 |
-| GET | /api/sftp/list | 列出目录内容 |
-| GET | /api/sftp/download | 下载文件 |
-| POST | /api/sftp/upload | 上传文件 |
-| POST | /api/sftp/mkdir | 创建目录 |
-| POST | /api/sftp/remove | 删除文件/目录 |
-| GET | /api/sftp/pwd | 获取当前路径 |
-| POST | /api/sftp/cd | 切换目录 |
-| GET | /ws/terminal | WebSocket 终端连接 |
-
-## 注意事项
-
-- 生产环境请配置正确的 SSH 主机密钥验证
-- 建议启用 HTTPS 以保护传输安全
-- 本地 Bash 模式仅在 Linux/macOS 系统可用
+MIT License
