@@ -29,6 +29,14 @@ fi
 INSTALL_DIR="/opt/web-ssh"
 BINARY_PATH="$INSTALL_DIR/web-ssh"
 CONFIG_FILE="$INSTALL_DIR/users.json"
+SERVICE_FILE="/etc/systemd/system/web-ssh.service"
+
+# 检测是否已安装
+IS_UPDATE=false
+if [ -f "$BINARY_PATH" ]; then
+    IS_UPDATE=true
+    echo -e "${GREEN}>>> 检测到已安装 Web SSH，正在进入更新模式...${NC}"
+fi
 
 mkdir -p "$INSTALL_DIR"
 
@@ -47,37 +55,67 @@ tail -n +$SKIP "$0" > "$BINARY_PATH"
 chmod +x "$BINARY_PATH"
 
 # --- 交互式设置 ---
-echo -e "\n${BLUE}>>> 基础配置${NC}"
+echo -e "\n${BLUE}>>> 配置选项${NC}"
 
 # 1. 设置运行端口
-read -p "请输入服务运行端口 [默认 8080]: " PORT
-PORT=${PORT:-8080}
+CURRENT_PORT=8080
+if [ "$IS_UPDATE" = true ] && [ -f "$SERVICE_FILE" ]; then
+    # 从现有的 service 文件中提取端口
+    EXTRACTED_PORT=$(grep ExecStart "$SERVICE_FILE" | sed -n 's/.*-port \([0-9]*\).*/\1/p')
+    if [ ! -z "$EXTRACTED_PORT" ]; then
+        CURRENT_PORT=$EXTRACTED_PORT
+    fi
+fi
 
-# 检查端口占用
-if lsof -Pi :$PORT -sTCP:LISTEN -t >/dev/null 2>&1 ; then
-    echo -e "${RED}警告: 端口 $PORT 已被占用，请在安装完成后手动调整或重新运行脚本${NC}"
+if [ "$IS_UPDATE" = true ]; then
+    read -p "当前运行端口为 $CURRENT_PORT，是否需要修改？(y/N): " CHANGE_PORT
+    if [[ "$CHANGE_PORT" =~ ^[Yy]$ ]]; then
+        read -p "请输入新的服务运行端口: " PORT
+        PORT=${PORT:-$CURRENT_PORT}
+    else
+        PORT=$CURRENT_PORT
+    fi
+else
+    read -p "请输入服务运行端口 [默认 8080]: " PORT
+    PORT=${PORT:-8080}
+fi
+
+# 检查端口占用 (如果是更新且端口没变，跳过检查)
+if [ "$PORT" != "$CURRENT_PORT" ] || [ "$IS_UPDATE" = false ]; then
+    if lsof -Pi :$PORT -sTCP:LISTEN -t >/dev/null 2>&1 ; then
+        echo -e "${RED}警告: 端口 $PORT 已被占用，请在安装完成后手动调整或重新运行脚本${NC}"
+    fi
 fi
 
 # 2. 设置管理员密码
-echo -e "\n${BLUE}>>> 管理员账号配置 (用户名: admin)${NC}"
-while true; do
-    read -s -p "请设置管理员密码: " ADMIN_PWD
-    echo ""
-    read -s -p "请再次输入密码以确认: " ADMIN_PWD_CONFIRM
-    echo ""
-    if [ "$ADMIN_PWD" == "$ADMIN_PWD_CONFIRM" ] && [ ! -z "$ADMIN_PWD" ]; then
-        break
-    else
-        echo -e "${RED}密码不匹配或为空，请重新输入${NC}"
+NEED_PWD_SETUP=true
+if [ "$IS_UPDATE" = true ] && [ -f "$CONFIG_FILE" ]; then
+    read -p "检测到已有配置文件，是否需要重置管理员 (admin) 密码？(y/N): " RESET_PWD
+    if [[ ! "$RESET_PWD" =~ ^[Yy]$ ]]; then
+        NEED_PWD_SETUP=false
     fi
-done
+fi
 
-# 生成密码哈希
-PWD_HASH=$(printf "%s" "$ADMIN_PWD" | sha256sum | cut -d' ' -f1 | xxd -r -p | base64 | tr -d '\n')
-CREATED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+if [ "$NEED_PWD_SETUP" = true ]; then
+    echo -e "\n${BLUE}>>> 管理员账号配置 (用户名: admin)${NC}"
+    while true; do
+        read -s -p "请设置管理员密码: " ADMIN_PWD
+        echo ""
+        read -s -p "请再次输入密码以确认: " ADMIN_PWD_CONFIRM
+        echo ""
+        if [ "$ADMIN_PWD" == "$ADMIN_PWD_CONFIRM" ] && [ ! -z "$ADMIN_PWD" ]; then
+            break
+        else
+            echo -e "${RED}密码不匹配或为空，请重新输入${NC}"
+        fi
+    done
 
-# 创建 users.json
-cat > "$CONFIG_FILE" <<EOF
+    # 生成密码哈希
+    PWD_HASH=$(printf "%s" "$ADMIN_PWD" | sha256sum | cut -d' ' -f1 | xxd -r -p | base64 | tr -d '\n')
+    CREATED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+    # 创建/覆盖 users.json
+    cat > "$CONFIG_FILE" <<EOF
 {
   "admin": {
     "username": "admin",
@@ -86,10 +124,12 @@ cat > "$CONFIG_FILE" <<EOF
   }
 }
 EOF
-chmod 600 "$CONFIG_FILE"
+    chmod 600 "$CONFIG_FILE"
+    echo -e "${GREEN}管理员配置已更新${NC}"
+fi
 
-# 创建 systemd 服务文件
-cat > /etc/systemd/system/web-ssh.service <<EOF
+# 创建/更新 systemd 服务文件
+cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=Web SSH Bastion Server
 After=network.target
@@ -107,7 +147,12 @@ WantedBy=multi-user.target
 EOF
 
 # 启动服务
-echo -e "\n${BLUE}>>> 正在启动服务...${NC}"
+if [ "$IS_UPDATE" = true ]; then
+    echo -e "\n${BLUE}>>> 正在重启服务...${NC}"
+else
+    echo -e "\n${BLUE}>>> 正在启动服务...${NC}"
+fi
+
 systemctl daemon-reload
 systemctl enable web-ssh
 systemctl restart web-ssh
@@ -115,7 +160,11 @@ systemctl restart web-ssh
 # 检查状态
 if systemctl is-active --quiet web-ssh; then
     echo -e "\n${GREEN}=======================================${NC}"
-    echo -e "${GREEN}    安装成功！服务已启动并设为开机自启    ${NC}"
+    if [ "$IS_UPDATE" = true ]; then
+        echo -e "${GREEN}    更新成功！服务已重新启动            ${NC}"
+    else
+        echo -e "${GREEN}    安装成功！服务已启动并设为开机自启    ${NC}"
+    fi
     echo -e "${GREEN}=======================================${NC}"
     
     IP_ADDR=$(hostname -I | awk '{print $1}')
