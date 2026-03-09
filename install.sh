@@ -40,21 +40,7 @@ fi
 
 mkdir -p "$INSTALL_DIR"
 
-# --- 提取二进制文件 ---
-echo -e "${BLUE}>>> 正在提取程序文件...${NC}"
-# 查找二进制数据开始的行号
-SKIP=$(awk '/^__BINARY_BELOW__/ {print NR + 1; exit 0; }' "$0")
-
-if [ -z "$SKIP" ]; then
-    echo -e "${RED}错误: 安装包损坏，未找到二进制数据标记${NC}"
-    exit 1
-fi
-
-# 提取二进制数据到目标路径
-tail -n +$SKIP "$0" > "$BINARY_PATH"
-chmod +x "$BINARY_PATH"
-
-# --- 交互式设置 ---
+# --- 交互式设置 (提前进行，以便确认端口) ---
 echo -e "\n${BLUE}>>> 配置选项${NC}"
 
 # 1. 设置运行端口
@@ -86,6 +72,28 @@ if [ "$PORT" != "$CURRENT_PORT" ] || [ "$IS_UPDATE" = false ]; then
         echo -e "${RED}警告: 端口 $PORT 已被占用，请在安装完成后手动调整或重新运行脚本${NC}"
     fi
 fi
+
+# --- 防火墙检查与处理 ---
+setup_firewall() {
+    local port=$1
+    if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
+        echo -e "${BLUE}检测到 UFW 防火墙已启用${NC}"
+        read -p "是否允许端口 $port 通过防火墙？(Y/n): " ALLOW_FW
+        if [[ ! "$ALLOW_FW" =~ ^[Nn]$ ]]; then
+            ufw allow "$port/tcp"
+            echo -e "${GREEN}UFW 规则已更新${NC}"
+        fi
+    elif command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld; then
+        echo -e "${BLUE}检测到 Firewalld 防火墙已启用${NC}"
+        read -p "是否允许端口 $port 通过防火墙？(Y/n): " ALLOW_FW
+        if [[ ! "$ALLOW_FW" =~ ^[Nn]$ ]]; then
+            firewall-cmd --permanent --add-port="$port/tcp"
+            firewall-cmd --reload
+            echo -e "${GREEN}Firewalld 规则已更新${NC}"
+        fi
+    fi
+}
+setup_firewall "$PORT"
 
 # 2. 设置管理员密码
 NEED_PWD_SETUP=true
@@ -125,8 +133,26 @@ if [ "$NEED_PWD_SETUP" = true ]; then
 }
 EOF
     chmod 600 "$CONFIG_FILE"
-    echo -e "${GREEN}管理员配置已更新${NC}"
 fi
+
+# --- 提取二进制文件 ---
+if [ "$IS_UPDATE" = true ]; then
+    echo -e "${BLUE}>>> 正在停止旧服务以进行更新...${NC}"
+    systemctl stop web-ssh || true
+fi
+
+echo -e "${BLUE}>>> 正在提取程序文件...${NC}"
+# 查找二进制数据开始的行号
+SKIP=$(awk '/^__BINARY_BELOW__/ {print NR + 1; exit 0; }' "$0")
+
+if [ -z "$SKIP" ]; then
+    echo -e "${RED}错误: 安装包损坏，未找到二进制数据标记${NC}"
+    exit 1
+fi
+
+# 提取二进制数据到目标路径 (覆盖旧文件)
+tail -n +$SKIP "$0" > "$BINARY_PATH"
+chmod +x "$BINARY_PATH"
 
 # 创建/更新 systemd 服务文件
 cat > "$SERVICE_FILE" <<EOF
@@ -147,12 +173,7 @@ WantedBy=multi-user.target
 EOF
 
 # 启动服务
-if [ "$IS_UPDATE" = true ]; then
-    echo -e "\n${BLUE}>>> 正在重启服务...${NC}"
-else
-    echo -e "\n${BLUE}>>> 正在启动服务...${NC}"
-fi
-
+echo -e "\n${BLUE}>>> 正在启动/重启服务...${NC}"
 systemctl daemon-reload
 systemctl enable web-ssh
 systemctl restart web-ssh
