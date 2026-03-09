@@ -1,6 +1,6 @@
 # 依赖
 node_modules/
-vendor/
+/vendor/
 
 # 编译产物
 *.exe
