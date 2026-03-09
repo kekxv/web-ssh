@@ -305,46 +305,7 @@ func ConnectSSH(w http.ResponseWriter, r *http.Request, sm *SSHSessionManager) s
 		return ""
 	}
 
-	log.Printf("Received config: host=%s, port=%d, user=%s, hasPassword=%v, hasEncryptedPassword=%v, hasPrivateKey=%v, hasEncryptedPrivateKey=%v",
-		config.Host, config.Port, config.Username,
-		config.Password != "", config.EncryptedPassword != "",
-		config.PrivateKey != "", config.EncryptedPrivateKey != "")
-
-	// Decrypt password if it's encrypted
-	if config.EncryptedPassword != "" {
-		password, err := DecryptData(config.EncryptedPassword)
-		if err != nil {
-			log.Printf("Failed to decrypt password: %v", err)
-			http.Error(w, fmt.Sprintf("Failed to decrypt password: %v", err), http.StatusBadRequest)
-			return ""
-		}
-		config.Password = password
-		log.Printf("Password decrypted successfully")
-	}
-
-	// Decrypt private key if it's encrypted
-	if config.EncryptedPrivateKey != "" {
-		privateKey, err := DecryptData(config.EncryptedPrivateKey)
-		if err != nil {
-			log.Printf("Failed to decrypt private key: %v", err)
-			http.Error(w, fmt.Sprintf("Failed to decrypt private key: %v", err), http.StatusBadRequest)
-			return ""
-		}
-		config.PrivateKey = privateKey
-		log.Printf("Private key decrypted successfully")
-	}
-
-	// Decrypt passphrase if it's encrypted
-	if config.EncryptedPassphrase != "" {
-		passphrase, err := DecryptData(config.EncryptedPassphrase)
-		if err != nil {
-			log.Printf("Failed to decrypt passphrase: %v", err)
-			http.Error(w, fmt.Sprintf("Failed to decrypt passphrase: %v", err), http.StatusBadRequest)
-			return ""
-		}
-		config.Passphrase = passphrase
-		log.Printf("Passphrase decrypted successfully")
-	}
+	log.Printf("Received config: host=%s, port=%d, user=%s", config.Host, config.Port, config.Username)
 
 	// Get web username from session
 	var webUsername string

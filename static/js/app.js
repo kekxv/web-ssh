@@ -2,6 +2,10 @@ const { createApp } = Vue;
 
 // 使用 AES 混合加密方案，因为 RSA 有长度限制
 async function encryptData(publicKeyBase64, data) {
+    if (!window.crypto || !window.crypto.subtle) {
+        console.warn('Crypto Subtle API is not available. This usually happens in non-secure contexts (HTTP). Falling back to plain text.');
+        return null;
+    }
     // 1. 生成随机 AES 密钥
     const aesKey = await crypto.subtle.generateKey(
         { name: 'AES-GCM', length: 256 },
@@ -137,14 +141,21 @@ createApp({
 
                 // Encrypt password
                 const encryptedPassword = await encryptData(keyData.public_key, this.loginForm.password);
+                
+                const loginPayload = {
+                    username: this.loginForm.username
+                };
+                
+                if (encryptedPassword) {
+                    loginPayload.encrypted_password = encryptedPassword;
+                } else {
+                    loginPayload.password = this.loginForm.password;
+                }
 
                 const response = await fetch('/api/auth/login', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        username: this.loginForm.username,
-                        encrypted_password: encryptedPassword
-                    })
+                    body: JSON.stringify(loginPayload)
                 });
 
                 const data = await response.json();
@@ -205,14 +216,26 @@ createApp({
                 const encryptedOldPassword = await encryptData(keyData.public_key, this.passwordForm.oldPassword);
                 const encryptedNewPassword = await encryptData(keyData.public_key, this.passwordForm.newPassword);
 
+                const changePayload = {
+                    username: this.currentUser
+                };
+                
+                if (encryptedOldPassword) {
+                    changePayload.encrypted_old_password = encryptedOldPassword;
+                } else {
+                    changePayload.old_password = this.passwordForm.oldPassword;
+                }
+                
+                if (encryptedNewPassword) {
+                    changePayload.encrypted_new_password = encryptedNewPassword;
+                } else {
+                    changePayload.new_password = this.passwordForm.newPassword;
+                }
+
                 const response = await fetch('/api/auth/change-password', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        username: this.currentUser,
-                        encrypted_old_password: encryptedOldPassword,
-                        encrypted_new_password: encryptedNewPassword
-                    })
+                    body: JSON.stringify(changePayload)
                 });
 
                 const data = await response.json();
@@ -334,24 +357,36 @@ createApp({
                 if (this.config.password) {
                     console.log('Encrypting password...');
                     const encryptedPassword = await encryptData(keyData.public_key, this.config.password);
-                    configToSend.encryptedPassword = encryptedPassword;
-                    console.log('Password encrypted, length:', encryptedPassword.length);
+                    if (encryptedPassword) {
+                        configToSend.encryptedPassword = encryptedPassword;
+                    } else {
+                        configToSend.password = this.config.password;
+                    }
+                    console.log('Password handled');
                 }
 
                 // 加密私钥字段（如果存在）
                 if (this.config.privateKey) {
                     console.log('Encrypting private key...');
                     const encryptedPrivateKey = await encryptData(keyData.public_key, this.config.privateKey);
-                    configToSend.encryptedPrivateKey = encryptedPrivateKey;
-                    console.log('Private key encrypted, length:', encryptedPrivateKey.length);
+                    if (encryptedPrivateKey) {
+                        configToSend.encryptedPrivateKey = encryptedPrivateKey;
+                    } else {
+                        configToSend.privateKey = this.config.privateKey;
+                    }
+                    console.log('Private key handled');
                 }
 
                 // 加密私钥密码字段（如果存在）
                 if (this.config.passphrase) {
                     console.log('Encrypting passphrase...');
                     const encryptedPassphrase = await encryptData(keyData.public_key, this.config.passphrase);
-                    configToSend.encryptedPassphrase = encryptedPassphrase;
-                    console.log('Passphrase encrypted, length:', encryptedPassphrase.length);
+                    if (encryptedPassphrase) {
+                        configToSend.encryptedPassphrase = encryptedPassphrase;
+                    } else {
+                        configToSend.passphrase = this.config.passphrase;
+                    }
+                    console.log('Passphrase handled');
                 }
 
                 // 加密跳板机配置（如果存在）
@@ -367,19 +402,34 @@ createApp({
                         };
                         // 加密密码
                         if (jump.password) {
-                            encryptedJump.encryptedPassword = await encryptData(keyData.public_key, jump.password);
+                            const encryptedPassword = await encryptData(keyData.public_key, jump.password);
+                            if (encryptedPassword) {
+                                encryptedJump.encryptedPassword = encryptedPassword;
+                            } else {
+                                encryptedJump.password = jump.password;
+                            }
                         }
                         // 加密私钥
                         if (jump.privateKey) {
-                            encryptedJump.encryptedPrivateKey = await encryptData(keyData.public_key, jump.privateKey);
+                            const encryptedPrivateKey = await encryptData(keyData.public_key, jump.privateKey);
+                            if (encryptedPrivateKey) {
+                                encryptedJump.encryptedPrivateKey = encryptedPrivateKey;
+                            } else {
+                                encryptedJump.privateKey = jump.privateKey;
+                            }
                         }
                         // 加密私钥密码
                         if (jump.passphrase) {
-                            encryptedJump.encryptedPassphrase = await encryptData(keyData.public_key, jump.passphrase);
+                            const encryptedPassphrase = await encryptData(keyData.public_key, jump.passphrase);
+                            if (encryptedPassphrase) {
+                                encryptedJump.encryptedPassphrase = encryptedPassphrase;
+                            } else {
+                                encryptedJump.passphrase = jump.passphrase;
+                            }
                         }
                         configToSend.jumpHosts.push(encryptedJump);
                     }
-                    console.log('Jump hosts encrypted, count:', configToSend.jumpHosts.length);
+                    console.log('Jump hosts handled, count:', configToSend.jumpHosts.length);
                 }
 
                 console.log('Sending config:', JSON.stringify(configToSend, null, 2));

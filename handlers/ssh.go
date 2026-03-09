@@ -179,6 +179,57 @@ func (m *SSHSessionManager) CloseUserSessions(username string) {
 // CreateSSHClient creates a new SSH client from config with jump host support.
 // Returns a slice of clients where the last one is the target client.
 func CreateSSHClient(config *models.SSHConnectionConfig) ([]*ssh.Client, error) {
+	var err error
+
+	// Decrypt target host credentials if needed
+	if config.EncryptedPassword != "" {
+		config.Password, err = DecryptData(config.EncryptedPassword)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt target password: %v", err)
+		}
+		config.EncryptedPassword = "" // Clear to prevent double decryption
+	}
+	if config.EncryptedPrivateKey != "" {
+		config.PrivateKey, err = DecryptData(config.EncryptedPrivateKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt target private key: %v", err)
+		}
+		config.EncryptedPrivateKey = ""
+	}
+	if config.EncryptedPassphrase != "" {
+		config.Passphrase, err = DecryptData(config.EncryptedPassphrase)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt target passphrase: %v", err)
+		}
+		config.EncryptedPassphrase = ""
+	}
+
+	// Decrypt jump host credentials if needed
+	for i := range config.JumpHosts {
+		jumpHost := &config.JumpHosts[i]
+		if jumpHost.EncryptedPassword != "" {
+			jumpHost.Password, err = DecryptData(jumpHost.EncryptedPassword)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decrypt jump host %d password: %v", i+1, err)
+			}
+			jumpHost.EncryptedPassword = ""
+		}
+		if jumpHost.EncryptedPrivateKey != "" {
+			jumpHost.PrivateKey, err = DecryptData(jumpHost.EncryptedPrivateKey)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decrypt jump host %d private key: %v", i+1, err)
+			}
+			jumpHost.EncryptedPrivateKey = ""
+		}
+		if jumpHost.EncryptedPassphrase != "" {
+			jumpHost.Passphrase, err = DecryptData(jumpHost.EncryptedPassphrase)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decrypt jump host %d passphrase: %v", i+1, err)
+			}
+			jumpHost.EncryptedPassphrase = ""
+		}
+	}
+
 	// If there are jump hosts, create SSH tunnel through them
 	if len(config.JumpHosts) > 0 {
 		return CreateSSHClientWithJump(config)
@@ -258,29 +309,6 @@ func CreateSSHClientWithJump(config *models.SSHConnectionConfig) ([]*ssh.Client,
 
 	// Connect through each jump host
 	for i, jumpHost := range jumpHosts {
-		// Decrypt jump host credentials if needed
-		if jumpHost.EncryptedPassword != "" {
-			jumpHost.Password, err = DecryptData(jumpHost.EncryptedPassword)
-			if err != nil {
-				closeAllClients(allClients)
-				return nil, fmt.Errorf("failed to decrypt jump host %d password: %v", i+1, err)
-			}
-		}
-		if jumpHost.EncryptedPrivateKey != "" {
-			jumpHost.PrivateKey, err = DecryptData(jumpHost.EncryptedPrivateKey)
-			if err != nil {
-				closeAllClients(allClients)
-				return nil, fmt.Errorf("failed to decrypt jump host %d private key: %v", i+1, err)
-			}
-		}
-		if jumpHost.EncryptedPassphrase != "" {
-			jumpHost.Passphrase, err = DecryptData(jumpHost.EncryptedPassphrase)
-			if err != nil {
-				closeAllClients(allClients)
-				return nil, fmt.Errorf("failed to decrypt jump host %d passphrase: %v", i+1, err)
-			}
-		}
-
 		jumpConfig := &models.SSHConnectionConfig{
 			Host:       jumpHost.Host,
 			Port:       jumpHost.Port,
@@ -331,29 +359,6 @@ func CreateSSHClientWithJump(config *models.SSHConnectionConfig) ([]*ssh.Client,
 			currentClient = ssh.NewClient(ncc, chans, reqs)
 		}
 		allClients = append(allClients, currentClient)
-	}
-
-	// Decrypt target host credentials if needed
-	if config.EncryptedPassword != "" {
-		config.Password, err = DecryptData(config.EncryptedPassword)
-		if err != nil {
-			closeAllClients(allClients)
-			return nil, fmt.Errorf("failed to decrypt target password: %v", err)
-		}
-	}
-	if config.EncryptedPrivateKey != "" {
-		config.PrivateKey, err = DecryptData(config.EncryptedPrivateKey)
-		if err != nil {
-			closeAllClients(allClients)
-			return nil, fmt.Errorf("failed to decrypt target private key: %v", err)
-		}
-	}
-	if config.EncryptedPassphrase != "" {
-		config.Passphrase, err = DecryptData(config.EncryptedPassphrase)
-		if err != nil {
-			closeAllClients(allClients)
-			return nil, fmt.Errorf("failed to decrypt target passphrase: %v", err)
-		}
 	}
 
 	// Connect to final target through the last jump host
