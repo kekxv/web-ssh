@@ -6,38 +6,81 @@
     <title>Web SSH - 堡垒机</title>
     <link rel="stylesheet" href="/vendor/xterm.css">
     <script src="/vendor/tailwind.js"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            950: '#020617',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
     <style>
-        body { background: #0f172a; }
+        /* 全局主题重置 */
+        body { color: #1e293b; }
+        .dark body { color: #f1f5f9; }
+
         .terminal-container { height: calc(100vh - 48px); }
         .xterm-viewport { border-radius: 8px; }
         /* 自定义滚动条 */
         ::-webkit-scrollbar { width: 8px; height: 8px; }
-        ::-webkit-scrollbar-track { background: #1e293b; }
-        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+        .dark ::-webkit-scrollbar-track { background: #1e293b; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        .dark ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        .dark ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+
+        /* 强制覆盖 style.css 中的白色文字 */
+        .text-slate-900 { color: #0f172a !important; }
+        .dark .dark\:text-white { color: #ffffff !important; }
+        
+        /* 表单元素深度适配 */
+        input, select, textarea {
+            color: inherit !important;
+        }
+        .dark input, .dark select, .dark textarea {
+            color: #ffffff !important;
+        }
+
+        /* Xterm 主题覆盖 */
+        .xterm .xterm-viewport { background-color: #f8fafc !important; }
+        .dark .xterm .xterm-viewport { background-color: #0f172a !important; }
+        .xterm .composition-view { background: #f8fafc !important; color: #0f172a !important; }
+        .dark .xterm .composition-view { background: #0f172a !important; color: #ffffff !important; }
     </style>
 </head>
-<body class="h-screen overflow-hidden">
+<body class="h-screen overflow-hidden bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
     <div id="app" class="h-full">
         <!-- 登录模态框 -->
-        <div v-if="!isLoggedIn" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
-            <div class="bg-slate-800 rounded-2xl p-8 w-full max-w-md mx-4 shadow-2xl border border-slate-700">
-                <h2 class="text-2xl font-bold text-white mb-6 flex items-center gap-2">
+        <div v-if="!isLoggedIn" class="fixed inset-0 bg-black/60 dark:bg-black/80 flex items-center justify-center z-50">
+            <div class="bg-white dark:bg-slate-800 rounded-2xl p-8 w-full max-w-md mx-4 shadow-2xl border border-slate-200 dark:border-slate-700 relative">
+                <!-- 主题切换按钮 -->
+                <button @click="toggleTheme" class="absolute top-6 right-6 p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
+                    <span v-if="theme === 'light'">🌙</span>
+                    <span v-else>☀️</span>
+                </button>
+                <h2 class="text-2xl font-bold text-slate-800 dark:text-white mb-6 flex items-center gap-2">
                     <span class="text-3xl">🔐</span> Web SSH - 堡垒机
                 </h2>
                 <form @submit.prevent="login">
                     <div class="space-y-4">
                         <div>
-                            <label class="block text-sm text-slate-400 mb-2">用户名</label>
+                            <label class="block text-sm text-slate-500 dark:text-slate-400 mb-2">用户名</label>
                             <input type="text" v-model="loginForm.username" placeholder="请输入用户名" required
-                                   class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500">
+                                   class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500">
                         </div>
                         <div>
-                            <label class="block text-sm text-slate-400 mb-2">密码</label>
+                            <label class="block text-sm text-slate-500 dark:text-slate-400 mb-2">密码</label>
                             <input type="password" v-model="loginForm.password" placeholder="请输入密码" required
-                                   class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500">
+                                   class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500">
                         </div>
-                        <div v-if="loginError" class="text-red-400 text-sm bg-red-900/20 border border-red-800 rounded-lg px-4 py-3">
+                        <div v-if="loginError" class="text-red-500 dark:text-red-400 text-sm bg-red-100 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3">
                             {{ loginError }}
                         </div>
                     </div>
@@ -47,7 +90,7 @@
                             🚀 登录
                         </button>
                     </div>
-                    <p class="mt-4 text-xs text-slate-500 text-center">
+                    <p class="mt-4 text-xs text-slate-400 dark:text-slate-500 text-center">
                         默认账号：admin / admin123
                     </p>
                 </form>
@@ -55,27 +98,32 @@
         </div>
 
         <!-- 连接配置模态框 -->
-        <div v-if="isLoggedIn && !connected" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
-            <div class="bg-slate-800 rounded-2xl p-8 w-full max-w-md mx-4 shadow-2xl border border-slate-700 max-h-[90vh] overflow-y-auto">
-                <div class="flex items-center justify-between mb-6 sticky top-0 bg-slate-800 pb-4">
-                    <h2 class="text-2xl font-bold text-white flex items-center gap-2">
+        <div v-if="isLoggedIn && !connected" class="fixed inset-0 bg-black/60 dark:bg-black/80 flex items-center justify-center z-50">
+            <div class="bg-white dark:bg-slate-800 rounded-2xl p-8 w-full max-w-md mx-4 shadow-2xl border border-slate-200 dark:border-slate-700 max-h-[90vh] overflow-y-auto relative">
+                <div class="flex items-center justify-between mb-6 sticky top-0 bg-white dark:bg-slate-800 pb-4">
+                    <h2 class="text-2xl font-bold text-slate-800 dark:text-white flex items-center gap-2">
                         <span class="text-3xl">🖥️</span> SSH 连接配置
                     </h2>
-                    <div class="flex items-center gap-3">
-                        <button @click="showPasswordModal = true" class="text-sm text-blue-400 hover:text-blue-300 transition-colors">
+                    <div class="flex items-center gap-3 mr-10">
+                        <button @click="showPasswordModal = true" class="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-500 dark:hover:text-blue-300 transition-colors">
                             修改密码
                         </button>
-                        <button @click="logout" class="text-sm text-slate-400 hover:text-white transition-colors">
+                        <button @click="logout" class="text-sm text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white transition-colors">
                             退出登录
                         </button>
                     </div>
                 </div>
+                <!-- 主题切换按钮 (配置界面) -->
+                <button @click="toggleTheme" class="absolute top-8 right-8 p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
+                    <span v-if="theme === 'light'">🌙</span>
+                    <span v-else>☀️</span>
+                </button>
                 <form @submit.prevent="connect">
                     <div class="space-y-4">
                         <div>
-                            <label class="block text-sm text-slate-400 mb-2">连接模式</label>
+                            <label class="block text-sm text-slate-500 dark:text-slate-400 mb-2">连接模式</label>
                             <select v-model="connectionMode" @change="onModeChange"
-                                    class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                                    class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
                                 <option value="ssh">🖥️ SSH 远程连接</option>
                                 <option value="local">💻 本机登录</option>
                             </select>
@@ -84,115 +132,116 @@
                         <template v-if="connectionMode === 'ssh'">
                             <div class="grid grid-cols-3 gap-3">
                                 <div class="col-span-2">
-                                    <label class="block text-sm text-slate-400 mb-2">主机地址</label>
+                                    <label class="block text-sm text-slate-500 dark:text-slate-400 mb-2">主机地址</label>
                                     <input type="text" v-model="config.host" placeholder="192.168.1.100" required
-                                           class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500">
+                                           class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500">
                                 </div>
                                 <div>
-                                    <label class="block text-sm text-slate-400 mb-2">端口</label>
+                                    <label class="block text-sm text-slate-500 dark:text-slate-400 mb-2">端口</label>
                                     <input type="number" v-model="config.port" value="22" required
-                                           class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500">
+                                           class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500">
                                 </div>
                             </div>
                             <div>
-                                <label class="block text-sm text-slate-400 mb-2">用户名</label>
+                                <label class="block text-sm text-slate-500 dark:text-slate-400 mb-2">用户名</label>
                                 <input type="text" v-model="config.username" placeholder="root" required
-                                       class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500">
+                                       class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500">
                             </div>
                             <div>
-                                <label class="block text-sm text-slate-400 mb-2">认证方式</label>
+                                <label class="block text-sm text-slate-500 dark:text-slate-400 mb-2">认证方式</label>
                                 <select v-model="authMethod"
-                                        class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500">
+                                        class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500">
                                     <option value="password">🔑 密码认证</option>
                                     <option value="key">📜 私钥认证</option>
                                 </select>
                             </div>
                             <div v-if="authMethod === 'password'">
-                                <label class="block text-sm text-slate-400 mb-2">密码</label>
+                                <label class="block text-sm text-slate-500 dark:text-slate-400 mb-2">密码</label>
                                 <input type="password" v-model="config.password" placeholder="请输入密码"
-                                       class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500">
+                                       class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500">
                             </div>
                             <template v-if="authMethod === 'key'">
                                 <div>
-                                    <label class="block text-sm text-slate-400 mb-2">私钥内容</label>
+                                    <label class="block text-sm text-slate-500 dark:text-slate-400 mb-2">私钥内容</label>
                                     <textarea v-model="config.privateKey"
                                               placeholder="-----BEGIN RSA PRIVATE KEY-----..."
                                               rows="6"
-                                              class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white font-mono text-sm focus:outline-none focus:border-blue-500 resize-none"></textarea>
+                                              class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg px-4 py-3 text-slate-900 dark:text-white font-mono text-sm focus:outline-none focus:border-blue-500 resize-none"></textarea>
                                 </div>
                                 <div>
-                                    <label class="block text-sm text-slate-400 mb-2">私钥密码 (Passphrase)</label>
+                                    <label class="block text-sm text-slate-500 dark:text-slate-400 mb-2">私钥密码 (Passphrase)</label>
                                     <input type="password" v-model="config.passphrase" placeholder="私钥加密密码（如有）"
-                                           class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500">
+                                           class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500">
                                 </div>
-                                <div class="flex items-center gap-3 text-slate-400 text-sm">
+                                <div class="flex items-center gap-3 text-slate-500 dark:text-slate-400 text-sm">
                                     <input type="file" @change="handleKeyFileUpload"
-                                           class="flex-1 text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-blue-600 file:text-white hover:file:bg-blue-700 cursor-pointer">
+                                           class="flex-1 text-slate-500 dark:text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-blue-600 file:text-white hover:file:bg-blue-700 cursor-pointer">
                                 </div>
                             </template>
 
                             <!-- 跳板机配置 -->
-                            <div class="border-t border-slate-700 pt-4 mt-4">
+                            <div class="border-t border-slate-100 dark:border-slate-700 pt-4 mt-4">
                                 <div class="flex items-center justify-between mb-3">
-                                    <label class="block text-sm text-slate-400 flex items-center gap-2">
+                                    <label class="block text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
                                         <span>🔗</span> 跳板机配置 (最多 4 层)
                                     </label>
                                     <button type="button" @click="addJumpHost"
-                                            class="px-3 py-1 text-xs bg-blue-600/20 text-blue-400 rounded-lg hover:bg-blue-600/30 transition-colors">
+                                            class="px-3 py-1 text-xs bg-blue-100 dark:bg-blue-600/20 text-blue-600 dark:text-blue-400 rounded-lg hover:bg-blue-200 dark:hover:bg-blue-600/30 transition-colors">
                                         ➕ 添加跳板机
                                     </button>
                                 </div>
 
                                 <div v-if="config.jumpHosts && config.jumpHosts.length > 0" class="space-y-3">
                                     <div v-for="(jump, index) in config.jumpHosts" :key="index"
-                                         class="bg-slate-900/50 rounded-lg p-3 border border-slate-700">
+                                         class="bg-slate-50 dark:bg-slate-900/50 rounded-lg p-3 border border-slate-200 dark:border-slate-700">
                                         <div class="flex items-center justify-between mb-2">
-                                            <span class="text-xs text-blue-400 font-medium">🔗 第 {{ index + 1 }} 层跳板</span>
+                                            <span class="text-xs text-blue-600 dark:text-blue-400 font-medium">🔗 第 {{ index + 1 }} 层跳板</span>
                                             <button type="button" @click="removeJumpHost(index)"
-                                                    class="text-xs text-red-400 hover:text-red-300">
+                                                    class="text-xs text-red-600 dark:text-red-400 hover:text-red-500 dark:hover:text-red-300">
                                                 🗑️ 删除
                                             </button>
                                         </div>
                                         <div class="grid grid-cols-3 gap-2">
                                             <div class="col-span-2">
                                                 <input type="text" v-model="jump.host" placeholder="跳板机地址"
-                                                       class="w-full bg-slate-800 border border-slate-600 rounded px-2 py-2 text-xs text-white focus:outline-none focus:border-blue-500">
+                                                       class="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded px-2 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-blue-500">
                                             </div>
                                             <div>
                                                 <input type="number" v-model="jump.port" value="22" placeholder="端口"
-                                                       class="w-full bg-slate-800 border border-slate-600 rounded px-2 py-2 text-xs text-white focus:outline-none focus:border-blue-500">
+                                                       class="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded px-2 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-blue-500">
                                             </div>
                                         </div>
                                         <div class="mt-2">
                                             <input type="text" v-model="jump.username" placeholder="用户名"
-                                                   class="w-full bg-slate-800 border border-slate-600 rounded px-2 py-2 text-xs text-white focus:outline-none focus:border-blue-500">
+                                                   class="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded px-2 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-blue-500">
                                         </div>
                                         <div class="mt-2">
                                             <select v-model="jump.authMethod" @change="onJumpAuthMethodChange(jump)"
-                                                    class="w-full bg-slate-800 border border-slate-600 rounded px-2 py-2 text-xs text-white focus:outline-none focus:border-blue-500">
+                                                    class="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded px-2 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-blue-500">
                                                 <option value="password">🔑 密码认证</option>
                                                 <option value="key">📜 私钥认证</option>
                                             </select>
                                         </div>
                                         <div v-if="jump.authMethod === 'password'" class="mt-2">
                                             <input type="password" v-model="jump.password" placeholder="密码"
-                                                   class="w-full bg-slate-800 border border-slate-600 rounded px-2 py-2 text-xs text-white focus:outline-none focus:border-blue-500">
+                                                   class="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded px-2 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-blue-500">
                                         </div>
                                         <template v-if="jump.authMethod === 'key'">
                                             <div class="mt-2">
                                                 <textarea v-model="jump.privateKey"
                                                           placeholder="-----BEGIN RSA PRIVATE KEY-----..."
                                                           rows="3"
-                                                          class="w-full bg-slate-800 border border-slate-600 rounded px-2 py-2 text-xs text-white font-mono focus:outline-none focus:border-blue-500 resize-none"></textarea>
+                                                          class="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded px-2 py-2 text-xs text-slate-900 dark:text-white font-mono focus:outline-none focus:border-blue-500 resize-none"></textarea>
                                             </div>
                                             <div class="mt-2">
                                                 <input type="password" v-model="jump.passphrase" placeholder="私钥密码 (Passphrase)"
-                                                       class="w-full bg-slate-800 border border-slate-600 rounded px-2 py-2 text-xs text-white focus:outline-none focus:border-blue-500">
+                                                       class="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded px-2 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-blue-500">
                                             </div>
+
                                         </template>
                                     </div>
                                 </div>
-                                <div v-else class="text-xs text-slate-500 bg-slate-900/30 rounded-lg p-3">
+                                <div v-else class="text-xs text-slate-500 bg-slate-50 dark:bg-slate-900/30 rounded-lg p-3 border border-slate-100 dark:border-slate-800">
                                     💡 点击"添加跳板机"按钮添加中转服务器
                                 </div>
                             </div>
@@ -200,10 +249,10 @@
 
                         <!-- 本机登录模式 -->
                         <template v-if="connectionMode === 'local'">
-                            <div class="bg-slate-900/50 rounded-lg p-4 border border-slate-700">
+                            <div class="bg-blue-50 dark:bg-slate-900/50 rounded-lg p-4 border border-blue-100 dark:border-slate-700">
                                 <div class="flex items-center gap-2 mb-3">
-                                    <span class="text-blue-400">ℹ️</span>
-                                    <span class="text-sm text-slate-400">本机登录模式</span>
+                                    <span class="text-blue-500 dark:text-blue-400">ℹ️</span>
+                                    <span class="text-sm text-slate-600 dark:text-slate-400 font-medium">本机登录模式</span>
                                 </div>
                                 <p class="text-xs text-slate-500">
                                     💡 点击连接后，将显示系统登录界面，请输入用户名和密码。
@@ -225,44 +274,43 @@
         <!-- 主界面 -->
         <div v-show="connected" class="h-full flex">
             <!-- 左侧 SFTP 面板 -->
-            <div v-if="connectionMode === 'ssh' || isLocalMode" class="w-96 bg-slate-800 border-r border-slate-700 flex flex-col">
-                <div class="p-4 bg-slate-900 border-b border-slate-700">
-                    <h3 class="text-lg font-semibold text-white flex items-center gap-2">
+            <div v-if="connectionMode === 'ssh' || isLocalMode" class="w-96 bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 flex flex-col">
+                <div class="p-4 bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
+                    <h3 class="text-lg font-semibold text-slate-800 dark:text-white flex items-center gap-2">
                         <span>📂</span> <span v-if="isLocalMode">本地文件管理</span><span v-else>SFTP 文件管理</span>
                     </h3>
                 </div>
 
                 <!-- 工具栏 -->
-                <div class="flex items-center gap-2 p-3 bg-slate-800/50 border-b border-slate-700">
+                <div class="flex items-center gap-2 p-3 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700">
                     <button @click="goHome" title="回到首页"
-                            class="p-2 rounded-lg hover:bg-slate-700 transition-colors text-slate-400 hover:text-white"
-                            title="回到首页">🏠</button>
+                            class="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white">🏠</button>
                     <button @click="navigateUp" title="上级目录"
-                            class="p-2 rounded-lg hover:bg-slate-700 transition-colors text-slate-400 hover:text-white">⬆️</button>
+                            class="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white">⬆️</button>
                     <button @click="refreshFileList" title="刷新"
-                            class="p-2 rounded-lg hover:bg-slate-700 transition-colors text-slate-400 hover:text-white">🔄</button>
+                            class="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white">🔄</button>
                     <div class="flex-1"></div>
                     <button @click="showMkdirModal = true" title="新建文件夹"
-                            class="px-3 py-2 rounded-lg bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 transition-colors text-sm font-medium">➕ 新建</button>
+                            class="px-3 py-2 rounded-lg bg-blue-100 dark:bg-blue-600/20 text-blue-600 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-600/30 transition-colors text-sm font-medium">➕ 新建</button>
                     <button @click="triggerUpload" title="上传文件"
-                            class="px-3 py-2 rounded-lg bg-green-600/20 text-green-400 hover:bg-green-600/30 transition-colors text-sm font-medium">📤 上传</button>
+                            class="px-3 py-2 rounded-lg bg-green-100 dark:bg-green-600/20 text-green-600 dark:text-green-400 hover:bg-green-200 dark:hover:bg-green-600/30 transition-colors text-sm font-medium">📤 上传</button>
                     <input type="file" ref="fileInput" @change="handleFileUpload" style="display:none">
                 </div>
 
                 <!-- 路径栏 -->
-                <div class="flex items-center gap-2 p-3 bg-slate-900/50 border-y border-slate-700">
-                    <span class="text-slate-500 text-sm">📍</span>
+                <div class="flex items-center gap-2 p-3 bg-slate-50 dark:bg-slate-900/50 border-y border-slate-200 dark:border-slate-700">
+                    <span class="text-slate-400 text-sm">📍</span>
                     <input type="text" v-model="currentPath" @keyup.enter="navigateToPath"
-                           class="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                           class="flex-1 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-slate-900 dark:text-white text-sm focus:outline-none focus:border-blue-500"
                            placeholder="输入路径...">
                     <button @click="navigateToPath"
                             class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors">跳转</button>
                 </div>
 
                 <!-- 文件列表 -->
-                <div class="flex-1 overflow-y-auto p-2">
+                <div class="flex-1 overflow-y-auto p-2 bg-white dark:bg-slate-800">
                     <!-- 表头 -->
-                    <div class="grid grid-cols-[32px_1fr_70px_80px] gap-2 px-3 py-2 text-xs text-slate-500 font-medium border-b border-slate-700 mb-1">
+                    <div class="grid grid-cols-[32px_1fr_70px_80px] gap-2 px-3 py-2 text-xs text-slate-400 font-medium border-b border-slate-100 dark:border-slate-700 mb-1">
                         <span></span>
                         <span>名称</span>
                         <span class="text-right">大小</span>
@@ -272,16 +320,16 @@
                     <div v-for="file in fileList" :key="file.name"
                          @dblclick="handleFileClick(file)"
                          :class="['grid grid-cols-[32px_1fr_70px_80px] gap-2 px-3 py-3 rounded-lg cursor-pointer transition-colors group',
-                                  file.isDir ? 'bg-slate-700/30 hover:bg-slate-700/50' : 'hover:bg-slate-700/30']">
+                                  file.isDir ? 'bg-slate-50 dark:bg-slate-700/30 hover:bg-slate-100 dark:hover:bg-slate-700/50' : 'hover:bg-slate-50 dark:hover:bg-slate-700/30']">
                         <span class="text-xl flex items-center">{{ file.isDir ? '📁' : getFileIcon(file.name) }}</span>
-                        <span class="text-sm text-slate-200 truncate flex items-center" :title="file.name">{{ file.name }}</span>
-                        <span class="text-xs text-slate-500 text-right flex items-center justify-end">{{ formatFileSize(file.size) }}</span>
+                        <span class="text-sm text-slate-700 dark:text-slate-200 truncate flex items-center font-medium" :title="file.name">{{ file.name }}</span>
+                        <span class="text-xs text-slate-400 text-right flex items-center justify-end">{{ formatFileSize(file.size) }}</span>
                         <div class="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                             <button v-if="!file.isDir" @click.stop="downloadFile(file)"
-                                    class="p-1.5 rounded hover:bg-blue-600/20 text-slate-400 hover:text-blue-400 transition-colors"
+                                    class="p-1.5 rounded hover:bg-blue-100 dark:hover:bg-blue-600/20 text-slate-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
                                     title="下载">⬇️</button>
                             <button @click.stop="deleteFile(file)"
-                                    class="p-1.5 rounded hover:bg-red-600/20 text-slate-400 hover:text-red-400 transition-colors"
+                                    class="p-1.5 rounded hover:bg-red-100 dark:hover:bg-red-600/20 text-slate-400 hover:text-red-500 dark:hover:text-red-400 transition-colors"
                                     title="删除">🗑️</button>
                         </div>
                     </div>
@@ -299,52 +347,57 @@
             </div>
 
             <!-- 右侧终端面板 -->
-            <div class="flex-1 bg-slate-900 flex flex-col">
-                <div class="flex items-center justify-between px-4 py-3 bg-slate-800 border-b border-slate-700">
+            <div class="flex-1 bg-white dark:bg-slate-950 flex flex-col transition-colors duration-300">
+                <div class="flex items-center justify-between px-4 py-3 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 shadow-sm z-10">
                     <div class="flex items-center gap-4">
-                        <h3 class="text-lg font-semibold text-white flex items-center gap-2">
+                        <h3 class="text-sm font-semibold text-slate-800 dark:text-white flex items-center gap-2">
                             <span>💻</span> 终端
-                            <span v-if="connectionMode === 'ssh'" class="text-xs px-2 py-1 bg-blue-600/20 text-blue-400 rounded">{{ config.username }}@{{ config.host }}</span>
-                            <span v-else class="text-xs px-2 py-1 bg-green-600/20 text-green-400 rounded">Local</span>
+                            <span v-if="connectionMode === 'ssh'" class="text-xs px-2 py-1 bg-blue-100 dark:bg-blue-600/20 text-blue-600 dark:text-blue-400 rounded font-medium">{{ config.username }}@{{ config.host }}</span>
+                            <span v-else class="text-xs px-2 py-1 bg-green-100 dark:bg-green-600/20 text-green-600 dark:text-green-400 rounded font-medium">Local</span>
                         </h3>
-                        <span class="text-sm text-slate-400">👤 {{ currentUser }}</span>
+                        <span class="text-xs text-slate-500 dark:text-slate-400 hidden sm:inline">👤 {{ currentUser }}</span>
                     </div>
                     <div class="flex items-center gap-2">
+                        <!-- 主题切换按钮 -->
+                        <button @click="toggleTheme" class="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-slate-500 dark:text-slate-400">
+                            <span v-if="theme === 'light'">🌙</span>
+                            <span v-else>☀️</span>
+                        </button>
                         <button @click="showPasswordModal = true"
-                                class="px-4 py-2 bg-slate-700/50 hover:bg-slate-600/50 text-slate-300 rounded-lg text-sm font-medium transition-colors">
+                                class="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-lg text-xs font-medium transition-colors">
                             修改密码
                         </button>
                         <button @click="logout"
-                                class="px-4 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded-lg text-sm font-medium transition-colors">
+                                class="px-3 py-1.5 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/30 text-red-600 dark:text-red-400 rounded-lg text-xs font-medium transition-colors">
                             退出登录
                         </button>
                         <button @click="disconnect"
-                                class="px-4 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded-lg text-sm font-medium transition-colors">
-                            断开连接
+                                class="px-4 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-lg text-xs font-bold transition-all shadow-lg shadow-red-600/20">
+                            断开
                         </button>
                     </div>
                 </div>
-                <div class="flex-1 p-2 overflow-hidden">
-                    <div id="terminal-container" class="w-full h-full rounded-lg overflow-hidden"></div>
+                <div class="flex-1 p-2 overflow-hidden bg-slate-50 dark:bg-black transition-colors duration-300">
+                    <div id="terminal-container" class="w-full h-full rounded-lg overflow-hidden shadow-2xl"></div>
                 </div>
             </div>
         </div>
 
         <!-- 新建文件夹模态框 -->
-        <div v-if="showMkdirModal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
-            <div class="bg-slate-800 rounded-xl p-6 w-full max-w-sm mx-4 border border-slate-700 shadow-2xl">
-                <h3 class="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+        <div v-if="showMkdirModal" class="fixed inset-0 bg-black/60 dark:bg-black/80 flex items-center justify-center z-50 transition-opacity">
+            <div class="bg-white dark:bg-slate-800 rounded-2xl p-6 w-full max-w-sm mx-4 border border-slate-200 dark:border-slate-700 shadow-2xl scale-in">
+                <h3 class="text-lg font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
                     <span>📁</span> 新建文件夹
                 </h3>
                 <input type="text" v-model="newFolderName" placeholder="文件夹名称" ref="folderInput"
-                       class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 mb-4">
+                       class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 mb-4 transition-all">
                 <div class="flex gap-3">
                     <button @click="createFolder"
-                            class="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-medium py-2.5 px-4 rounded-lg transition-colors">
+                            class="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2.5 px-4 rounded-lg transition-all shadow-lg shadow-blue-600/20">
                         创建
                     </button>
                     <button @click="showMkdirModal = false"
-                            class="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-medium py-2.5 px-4 rounded-lg transition-colors">
+                            class="flex-1 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-200 font-semibold py-2.5 px-4 rounded-lg transition-all">
                         取消
                     </button>
                 </div>
@@ -352,36 +405,36 @@
         </div>
 
         <!-- 修改密码模态框 -->
-        <div v-if="showPasswordModal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
-            <div class="bg-slate-800 rounded-xl p-6 w-full max-w-sm mx-4 border border-slate-700 shadow-2xl">
-                <h3 class="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+        <div v-if="showPasswordModal" class="fixed inset-0 bg-black/60 dark:bg-black/80 flex items-center justify-center z-50 transition-opacity">
+            <div class="bg-white dark:bg-slate-800 rounded-2xl p-6 w-full max-w-sm mx-4 border border-slate-200 dark:border-slate-700 shadow-2xl scale-in">
+                <h3 class="text-lg font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
                     <span>🔑</span> 修改密码
                 </h3>
                 <div class="space-y-4">
                     <div>
-                        <label class="block text-sm text-slate-400 mb-2">旧密码</label>
+                        <label class="block text-sm text-slate-500 dark:text-slate-400 mb-2 font-medium">旧密码</label>
                         <input type="password" v-model="passwordForm.oldPassword" placeholder="请输入旧密码"
-                               class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500">
+                               class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 transition-all">
                     </div>
                     <div>
-                        <label class="block text-sm text-slate-400 mb-2">新密码</label>
+                        <label class="block text-sm text-slate-500 dark:text-slate-400 mb-2 font-medium">新密码</label>
                         <input type="password" v-model="passwordForm.newPassword" placeholder="请输入新密码"
-                               class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500">
+                               class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 transition-all">
                     </div>
-                    <div v-if="passwordError" class="text-red-400 text-sm bg-red-900/20 border border-red-800 rounded-lg px-4 py-2">
+                    <div v-if="passwordError" class="text-red-500 text-xs bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-800 rounded-lg px-4 py-2">
                         {{ passwordError }}
                     </div>
-                    <div v-if="passwordSuccess" class="text-green-400 text-sm bg-green-900/20 border border-green-800 rounded-lg px-4 py-2">
+                    <div v-if="passwordSuccess" class="text-green-500 text-xs bg-green-50 dark:bg-green-900/20 border border-green-100 dark:border-green-800 rounded-lg px-4 py-2">
                         {{ passwordSuccess }}
                     </div>
                 </div>
-                <div class="flex gap-3 mt-4">
+                <div class="flex gap-3 mt-6">
                     <button @click="changePassword"
-                            class="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-medium py-2.5 px-4 rounded-lg transition-colors">
+                            class="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2.5 px-4 rounded-lg transition-all shadow-lg shadow-blue-600/20">
                         确认修改
                     </button>
                     <button @click="showPasswordModal = false"
-                            class="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-medium py-2.5 px-4 rounded-lg transition-colors">
+                            class="flex-1 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-200 font-semibold py-2.5 px-4 rounded-lg transition-all">
                         取消
                     </button>
                 </div>

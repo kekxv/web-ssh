@@ -109,17 +109,94 @@ createApp({
                 newPassword: ''
             },
             passwordError: '',
-            passwordSuccess: ''
+            passwordSuccess: '',
+            theme: localStorage.getItem('theme') || 'light'
         };
     },
 
+    watch: {
+        theme(newTheme) {
+            localStorage.setItem('theme', newTheme);
+            this.applyTheme();
+        }
+    },
+
     async mounted() {
+        // Apply theme on load
+        this.applyTheme();
         // Check if already logged in
         await this.checkAuth();
         this.initTerminal();
     },
 
     methods: {
+        toggleTheme() {
+            this.theme = this.theme === 'light' ? 'dark' : 'light';
+            localStorage.setItem('theme', this.theme);
+            this.applyTheme();
+        },
+
+        applyTheme() {
+            const isDark = this.theme === 'dark';
+            if (isDark) {
+                document.documentElement.classList.add('dark');
+            } else {
+                document.documentElement.classList.remove('dark');
+            }
+
+            if (this.terminal) {
+                // Xterm.js v5+ 标准更新主题方式
+                this.terminal.options.theme = isDark ? {
+                    background: '#0f172a',
+                    foreground: '#ffffff',
+                    cursor: '#4a9eff',
+                    selection: '#4a9eff40',
+                    black: '#000000',
+                    red: '#ff5555',
+                    green: '#50fa7b',
+                    yellow: '#f1fa8c',
+                    blue: '#bd93f9',
+                    magenta: '#ff79c6',
+                    cyan: '#8be9fd',
+                    white: '#bfbfbf',
+                    brightBlack: '#4d4d4d',
+                    brightRed: '#ff6e67',
+                    brightGreen: '#5af78e',
+                    brightYellow: '#f4f99d',
+                    brightBlue: '#caa9fa',
+                    brightMagenta: '#ff92d0',
+                    brightCyan: '#9aedfe',
+                    brightWhite: '#e6e6e6'
+                } : {
+                    background: '#f8fafc',
+                    foreground: '#0f172a',
+                    cursor: '#3b82f6',
+                    selection: '#3b82f640',
+                    black: '#000000',
+                    red: '#cd3131',
+                    green: '#00bc00',
+                    yellow: '#949800',
+                    blue: '#0451a5',
+                    magenta: '#bc05bc',
+                    cyan: '#0598bc',
+                    white: '#555555',
+                    brightBlack: '#666666',
+                    brightRed: '#cd3131',
+                    brightGreen: '#14ce14',
+                    brightYellow: '#b5ba00',
+                    brightBlue: '#0451a5',
+                    brightMagenta: '#bc05bc',
+                    brightCyan: '#0598bc',
+                    brightWhite: '#a5a5a5'
+                };
+                
+                // 强制终端重绘以应用新颜色
+                if (this.terminal.refresh) {
+                    this.terminal.refresh(0, this.terminal.rows - 1);
+                }
+            }
+        },
+
         async checkAuth() {
             try {
                 const response = await fetch('/api/auth/check');
@@ -261,11 +338,16 @@ createApp({
                 cursorBlink: true,
                 fontSize: 14,
                 fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-                theme: {
+                theme: this.theme === 'dark' ? {
                     background: '#0f172a',
                     foreground: '#ffffff',
                     cursor: '#4a9eff',
                     selection: '#4a9eff40'
+                } : {
+                    background: '#f8fafc',
+                    foreground: '#0f172a',
+                    cursor: '#3b82f6',
+                    selection: '#3b82f640'
                 }
             });
 
@@ -472,8 +554,30 @@ createApp({
                     this.getDefaultPath();
                 }
 
-                this.connectTerminal('ssh');
                 this.connected = true;
+                
+                // 登录成功后立即进行一次大小检测，确保后端 shell 获取正确的行列数
+                setTimeout(() => {
+                    if (this.fitAddon) {
+                        this.fitAddon.fit();
+                        const dimensions = this.getTerminalDimensions();
+                        console.log('Initial terminal resize:', dimensions);
+                        
+                        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                            const encoder = new TextEncoder();
+                            const message = JSON.stringify({
+                                type: 'resize',
+                                cols: dimensions.cols,
+                                rows: dimensions.rows
+                            });
+                            this.ws.send(encoder.encode(message));
+                        } else if (this.useHttpFallback) {
+                            this.sendHttpResize();
+                        }
+                    }
+                }, 100);
+
+                this.connectTerminal('ssh');
             } catch (error) {
                 console.error('SSH connection error:', error);
                 alert('连接失败：' + error.message);
@@ -519,6 +623,26 @@ createApp({
             this.currentPath = '~';  // 使用 ~ 表示 home 目录
             this.defaultPath = '~';
             this.connected = true;
+
+            // 登录成功后立即进行一次大小检测
+            setTimeout(() => {
+                if (this.fitAddon) {
+                    this.fitAddon.fit();
+                    const dimensions = this.getTerminalDimensions();
+                    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                        const encoder = new TextEncoder();
+                        const message = JSON.stringify({
+                            type: 'resize',
+                            cols: dimensions.cols,
+                            rows: dimensions.rows
+                        });
+                        this.ws.send(encoder.encode(message));
+                    } else if (this.useHttpFallback) {
+                        this.sendHttpResize();
+                    }
+                }
+            }, 100);
+
             this.loadFileList();
         },
 
