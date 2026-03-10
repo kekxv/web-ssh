@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"bufio"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -13,12 +12,10 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/creack/pty"
 	"golang.org/x/crypto/ssh"
 	"web-ssh/models"
 )
@@ -40,7 +37,7 @@ type TerminalHandler struct {
 // LocalPTYSession represents a local PTY session
 type LocalPTYSession struct {
 	ID       string
-	PTY      *os.File
+	PTY      PTY
 	Cmd      *exec.Cmd
 	mu       sync.Mutex
 }
@@ -51,7 +48,7 @@ type TerminalSession struct {
 	WS        *websocket.Conn
 	SSHSession *ssh.Session
 	SSHClient  *ssh.Client
-	LocalProc  *os.File
+	LocalProc  PTY
 	mu         sync.Mutex
 }
 
@@ -205,13 +202,10 @@ func (h *TerminalHandler) sshToWS(reader io.Reader, ts *TerminalSession) {
 }
 
 func (h *TerminalHandler) handleLocalBash(ts *TerminalSession, username string) {
-	// 直接使用 bash，因为用户已经通过 Web 登录认证
-	cmd := exec.Command("bash", "--login")
-	proc, err := pty.Start(cmd)
-	log.Printf("Starting local bash: %v", err)
-
+	// Use platform-specific startLocalShell
+	proc, err := startLocalShell(username)
 	if err != nil {
-		ts.SendError(fmt.Sprintf("Failed to start local bash: %v", err))
+		ts.SendError(fmt.Sprintf("Failed to start local shell: %v", err))
 		return
 	}
 
@@ -224,7 +218,7 @@ func (h *TerminalHandler) handleLocalBash(ts *TerminalSession, username string) 
 	h.keepAlive(ts)
 }
 
-func (h *TerminalHandler) wsToLocalProc(writer io.Writer, ts *TerminalSession) {
+func (h *TerminalHandler) wsToLocalProc(writer PTY, ts *TerminalSession) {
 	for {
 		_, message, err := ts.WS.ReadMessage()
 		if err != nil {
@@ -240,7 +234,10 @@ func (h *TerminalHandler) wsToLocalProc(writer io.Writer, ts *TerminalSession) {
 		case "input":
 			writer.Write([]byte(msg.Data))
 		case "resize":
-			// Handle resize for local bash if needed
+			// Handle resize for local bash
+			if writer != nil {
+				writer.Resize(uint16(msg.Rows), uint16(msg.Cols))
+			}
 		}
 	}
 }
@@ -296,6 +293,51 @@ func (ts *TerminalSession) Close() error {
 	return nil
 }
 
+// GetCurrentUser returns the current system user info
+func GetCurrentUser(w http.ResponseWriter, r *http.Request) {
+	user, err := user.Current()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	hostname, _ := os.Hostname()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"username": user.Username,
+		"uid":      user.Uid,
+		"gid":      user.Gid,
+		"home":     user.HomeDir,
+		"hostname": hostname,
+	})
+}
+
+// GetPublicKey returns the RSA public key for password encryption
+func GetPublicKey(w http.ResponseWriter, r *http.Request) {
+	pubDER, err := GetPublicKeyPEM()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	// Return as base64 encoded DER
+	pubBase64 := base64.StdEncoding.EncodeToString(pubDER)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"public_key": pubBase64,
+	})
+}
+
 // ConnectSSH handles SSH connection requests
 func ConnectSSH(w http.ResponseWriter, r *http.Request, sm *SSHSessionManager) string {
 	var config models.SSHConnectionConfig
@@ -344,104 +386,6 @@ func ConnectSSH(w http.ResponseWriter, r *http.Request, sm *SSHSessionManager) s
 	return sessionID
 }
 
-// startLocalBash starts a login bash process with PTY
-func startLocalBash() (*os.File, error) {
-	cmd := exec.Command("bash", "--login")
-	ptmx, err := pty.Start(cmd)
-	if err != nil {
-		return nil, err
-	}
-	return ptmx, nil
-}
-
-// GetCurrentUser returns the current system user info
-func GetCurrentUser(w http.ResponseWriter, r *http.Request) {
-	user, err := user.Current()
-	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{
-			"error": err.Error(),
-		})
-		return
-	}
-
-	hostname, _ := os.Hostname()
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"username": user.Username,
-		"uid":      user.Uid,
-		"gid":      user.Gid,
-		"home":     user.HomeDir,
-		"hostname": hostname,
-	})
-}
-
-// GetPublicKey returns the RSA public key for password encryption
-func GetPublicKey(w http.ResponseWriter, r *http.Request) {
-	pubDER, err := GetPublicKeyPEM()
-	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{
-			"error": err.Error(),
-		})
-		return
-	}
-
-	// Return as base64 encoded DER
-	pubBase64 := base64.StdEncoding.EncodeToString(pubDER)
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"public_key": pubBase64,
-	})
-}
-
-// GetSystemUsers returns a list of system users with login shells
-func GetSystemUsers(w http.ResponseWriter, r *http.Request) {
-	file, err := os.Open("/etc/passwd")
-	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{
-			"error": err.Error(),
-		})
-		return
-	}
-	defer file.Close()
-
-	var users []map[string]string
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text()
-		parts := strings.Split(line, ":")
-		if len(parts) < 7 {
-			continue
-		}
-
-		username := parts[0]
-		shell := parts[6]
-
-		// 只返回有有效登录 shell 的用户
-		if shell != "/usr/sbin/nologin" && shell != "/bin/false" && shell != "/sbin/nologin" && shell != "" {
-			users = append(users, map[string]string{
-				"username": username,
-				"shell":    shell,
-				"home":     parts[5],
-			})
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"os":    runtime.GOOS,
-		"arch":  runtime.GOARCH,
-		"users": users,
-	})
-}
-
 // LocalSessionRequest handles local bash session creation with login
 func LocalSessionRequest(w http.ResponseWriter, r *http.Request, h *TerminalHandler) {
 	if r.Method != http.MethodPost {
@@ -451,11 +395,8 @@ func LocalSessionRequest(w http.ResponseWriter, r *http.Request, h *TerminalHand
 
 	sessionID := generateSessionID()
 
-	// 直接使用 bash，因为用户已经通过 Web 登录认证
-	cmd := exec.Command("bash", "--login")
-	ptmx, err := pty.Start(cmd)
-	log.Printf("Starting local bash: %v", err)
-
+	// Use platform-specific startLocalShell
+	ptmx, err := startLocalShell("")
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to start shell: %v", err), http.StatusInternalServerError)
 		return
@@ -474,7 +415,7 @@ func LocalSessionRequest(w http.ResponseWriter, r *http.Request, h *TerminalHand
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"session_id": sessionID,
-		"message":    "Local bash session created.",
+		"message":    "Local shell session created.",
 	})
 }
 
@@ -566,7 +507,9 @@ func LocalSessionWrite(w http.ResponseWriter, r *http.Request, h *TerminalHandle
 	case "input":
 		session.PTY.Write([]byte(msg.Data))
 	case "resize":
-		// TODO: Handle resize
+		if session.PTY != nil {
+			session.PTY.Resize(uint16(msg.Rows), uint16(msg.Cols))
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -610,13 +553,21 @@ func LocalFileList(w http.ResponseWriter, r *http.Request) {
 		// 默认使用用户 home 目录
 		homeDir, err := os.UserHomeDir()
 		if err != nil {
-			homeDir = "/"
+			if runtime.GOOS == "windows" {
+				homeDir = "C:\\"
+			} else {
+				homeDir = "/"
+			}
 		}
 		path = homeDir
 	} else if path == "~" {
 		homeDir, err := os.UserHomeDir()
 		if err != nil {
-			homeDir = "/"
+			if runtime.GOOS == "windows" {
+				homeDir = "C:\\"
+			} else {
+				homeDir = "/"
+			}
 		}
 		path = homeDir
 	}

@@ -302,6 +302,13 @@ createApp({
                     const message = JSON.stringify({ type: 'input', data: data });
                     this.ws.send(encoder.encode(message));
                 }
+
+                // Auto refresh file list on Enter in local mode
+                if (this.connectionMode === 'local' && (data === '\r' || data === '\n')) {
+                    setTimeout(() => {
+                        this.loadFileList();
+                    }, 300); // Small delay to let shell process the command
+                }
             });
         },
 
