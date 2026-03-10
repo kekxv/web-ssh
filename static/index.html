@@ -274,7 +274,20 @@
         <!-- 主界面 -->
         <div v-show="connected" class="h-full flex">
             <!-- 左侧 SFTP 面板 -->
-            <div v-if="connectionMode === 'ssh' || isLocalMode" class="w-96 bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 flex flex-col">
+            <div v-if="connectionMode === 'ssh' || isLocalMode"
+                 class="w-96 bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 flex flex-col relative group/sftp"
+                 @dragover.prevent="onDragOver"
+                 @dragleave.prevent="onDragLeave"
+                 @drop.prevent="onDrop">
+                
+                <!-- 拖拽上传遮罩 -->
+                <div v-if="isDragging" class="absolute inset-0 bg-blue-500/20 dark:bg-blue-500/30 border-2 border-dashed border-blue-500 z-50 flex items-center justify-center backdrop-blur-[2px] pointer-events-none">
+                    <div class="bg-white dark:bg-slate-800 p-4 rounded-xl shadow-xl flex flex-col items-center gap-2">
+                        <span class="text-4xl">📥</span>
+                        <span class="text-sm font-bold text-blue-600 dark:text-blue-400">松开鼠标上传到当前目录</span>
+                    </div>
+                </div>
+
                 <div class="p-4 bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
                     <h3 class="text-lg font-semibold text-slate-800 dark:text-white flex items-center gap-2">
                         <span>📂</span> <span v-if="isLocalMode">本地文件管理</span><span v-else>SFTP 文件管理</span>

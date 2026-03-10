@@ -110,7 +110,8 @@ createApp({
             },
             passwordError: '',
             passwordSuccess: '',
-            theme: localStorage.getItem('theme') || 'light'
+            theme: localStorage.getItem('theme') || 'light',
+            isDragging: false
         };
     },
 
@@ -941,10 +942,36 @@ createApp({
             this.$refs.fileInput.click();
         },
 
-        async handleFileUpload(event) {
-            const file = event.target.files[0];
-            if (!file) return;
+        onDragOver(e) {
+            this.isDragging = true;
+        },
 
+        onDragLeave(e) {
+            this.isDragging = false;
+        },
+
+        async onDrop(e) {
+            this.isDragging = false;
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                for (let i = 0; i < files.length; i++) {
+                    await this.uploadSingleFile(files[i]);
+                }
+            }
+        },
+
+        async handleFileUpload(event) {
+            const files = event.target.files;
+            if (!files || files.length === 0) return;
+
+            for (let i = 0; i < files.length; i++) {
+                await this.uploadSingleFile(files[i]);
+            }
+
+            event.target.value = '';
+        },
+
+        async uploadSingleFile(file) {
             const formData = new FormData();
             formData.append('file', file);
 
@@ -968,18 +995,15 @@ createApp({
                 const data = await response.json();
 
                 if (data.success) {
-                    alert('上传成功');
                     this.loadFileList();
                 } else {
-                    alert('上传失败：' + (data.error || '未知错误'));
+                    alert(`文件 ${file.name} 上传失败：` + (data.error || '未知错误'));
                 }
             } catch (error) {
-                alert('上传失败：' + error.message);
+                alert(`文件 ${file.name} 上传失败：` + error.message);
             } finally {
-                setTimeout(() => { this.uploadProgress = 0; }, 2000);
+                setTimeout(() => { this.uploadProgress = 0; }, 1000);
             }
-
-            event.target.value = '';
         },
 
         async createFolder() {
