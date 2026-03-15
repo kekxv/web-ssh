@@ -151,7 +151,7 @@ createApp({
                     background: '#0f172a',
                     foreground: '#ffffff',
                     cursor: '#4a9eff',
-                    selection: '#4a9eff40',
+                    selectionBackground: '#4a9eff40',
                     black: '#000000',
                     red: '#ff5555',
                     green: '#50fa7b',
@@ -172,7 +172,7 @@ createApp({
                     background: '#f8fafc',
                     foreground: '#0f172a',
                     cursor: '#3b82f6',
-                    selection: '#3b82f640',
+                    selectionBackground: '#b4d7ff',
                     black: '#000000',
                     red: '#cd3131',
                     green: '#008a00',
@@ -338,12 +338,12 @@ createApp({
             this.terminal = new Terminal({
                 cursorBlink: true,
                 fontSize: 14,
-                fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+                fontFamily: '"JetBrainsMono Nerd Font", "JetBrains Mono", "FiraCode Nerd Font", Menlo, Monaco, monospace',
                 theme: this.theme === 'dark' ? {
                     background: '#0f172a',
                     foreground: '#ffffff',
                     cursor: '#4a9eff',
-                    selection: '#4a9eff40',
+                    selectionBackground: '#4a9eff40',
                     black: '#000000',
                     red: '#ff5555',
                     green: '#50fa7b',
@@ -364,7 +364,7 @@ createApp({
                     background: '#f8fafc',
                     foreground: '#0f172a',
                     cursor: '#3b82f6',
-                    selection: '#3b82f640',
+                    selectionBackground: '#b4d7ff',
                     black: '#000000',
                     red: '#cd3131',
                     green: '#008a00',
@@ -588,14 +588,14 @@ createApp({
                 }
 
                 this.connected = true;
-                
+
                 // 登录成功后立即进行一次大小检测，确保后端 shell 获取正确的行列数
                 setTimeout(() => {
                     if (this.fitAddon) {
                         this.fitAddon.fit();
                         const dimensions = this.getTerminalDimensions();
                         console.log('Initial terminal resize:', dimensions);
-                        
+
                         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
                             const encoder = new TextEncoder();
                             const message = JSON.stringify({
@@ -607,6 +607,10 @@ createApp({
                         } else if (this.useHttpFallback) {
                             this.sendHttpResize();
                         }
+                    }
+                    // 自动聚焦终端
+                    if (this.terminal) {
+                        this.terminal.focus();
                     }
                 }, 100);
 
@@ -673,6 +677,10 @@ createApp({
                     } else if (this.useHttpFallback) {
                         this.sendHttpResize();
                     }
+                }
+                // 自动聚焦终端
+                if (this.terminal) {
+                    this.terminal.focus();
                 }
             }, 100);
 
@@ -838,8 +846,15 @@ createApp({
             }
 
             if (this.ws) {
+                // 先移除 onclose 回调，避免在 clear() 之后写入断开消息
+                this.ws.onclose = null;
                 this.ws.close();
                 this.ws = null;
+            }
+
+            // 清空终端内容，确保重连时终端状态干净
+            if (this.terminal) {
+                this.terminal.clear();
             }
 
             // 关闭本地会话
