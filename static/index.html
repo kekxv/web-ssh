@@ -122,12 +122,36 @@
                 <form @submit.prevent="connect">
                     <div class="space-y-4">
                         <div>
-                            <label class="block text-sm text-slate-500 dark:text-slate-400 mb-2">连接模式</label>
-                            <select v-model="connectionMode" @change="onModeChange"
-                                    class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
-                                <option value="ssh">🖥️ SSH 远程连接</option>
-                                <option value="local">💻 本机登录</option>
-                            </select>
+                            <label class="block text-sm text-slate-500 dark:text-slate-400 mb-3">连接模式</label>
+                            <div class="space-y-3">
+                                <label class="flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors"
+                                       :class="connectionMode === 'ssh' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700/30'">
+                                    <input type="radio" v-model="connectionMode" value="ssh" class="w-4 h-4 text-blue-600">
+                                    <span class="text-2xl">🖥️</span>
+                                    <div>
+                                        <span class="font-medium text-slate-800 dark:text-white">SSH 远程连接</span>
+                                        <p class="text-xs text-slate-500 dark:text-slate-400">通过 SSH 协议连接远程服务器</p>
+                                    </div>
+                                </label>
+                                <label class="flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors"
+                                       :class="connectionMode === 'local' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700/30'">
+                                    <input type="radio" v-model="connectionMode" value="local" class="w-4 h-4 text-blue-600">
+                                    <span class="text-2xl">💻</span>
+                                    <div>
+                                        <span class="font-medium text-slate-800 dark:text-white">本机登录</span>
+                                        <p class="text-xs text-slate-500 dark:text-slate-400">在当前服务器上打开终端</p>
+                                    </div>
+                                </label>
+                                <label class="flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors"
+                                       :class="connectionMode === 'remoteLocal' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700/30'">
+                                    <input type="radio" v-model="connectionMode" value="remoteLocal" class="w-4 h-4 text-blue-600">
+                                    <span class="text-2xl">🌐</span>
+                                    <div>
+                                        <span class="font-medium text-slate-800 dark:text-white">远程本地登录</span>
+                                        <p class="text-xs text-slate-500 dark:text-slate-400">连接其他 web-ssh 服务器进行操作</p>
+                                    </div>
+                                </label>
+                            </div>
                         </div>
 
                         <template v-if="connectionMode === 'ssh'">
@@ -260,6 +284,34 @@
                                 </p>
                             </div>
                         </template>
+
+                        <!-- 远程本地登录模式 -->
+                        <template v-if="connectionMode === 'remoteLocal'">
+                            <div>
+                                <label class="block text-sm text-slate-500 dark:text-slate-400 mb-2">远程服务器地址</label>
+                                <input type="text" v-model="remoteConfig.url" placeholder="http://192.168.1.100:8080" required
+                                       class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500">
+                            </div>
+                            <div>
+                                <label class="block text-sm text-slate-500 dark:text-slate-400 mb-2">用户名</label>
+                                <input type="text" v-model="remoteConfig.username" placeholder="请输入用户名" required
+                                       class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500">
+                            </div>
+                            <div>
+                                <label class="block text-sm text-slate-500 dark:text-slate-400 mb-2">密码</label>
+                                <input type="password" v-model="remoteConfig.password" placeholder="请输入密码" required
+                                       class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500">
+                            </div>
+                            <div class="bg-purple-50 dark:bg-slate-900/50 rounded-lg p-4 border border-purple-100 dark:border-slate-700">
+                                <div class="flex items-center gap-2 mb-3">
+                                    <span class="text-purple-500 dark:text-purple-400">ℹ️</span>
+                                    <span class="text-sm text-slate-600 dark:text-slate-400 font-medium">远程本地登录模式</span>
+                                </div>
+                                <p class="text-xs text-slate-500">
+                                    💡 连接到另一台 web-ssh 服务器，通过该服务器操作其本机终端和文件。
+                                </p>
+                            </div>
+                        </template>
                     </div>
 
                     <div class="mt-6">
@@ -275,7 +327,7 @@
         <!-- 主界面 -->
         <div v-show="connected" class="h-full flex">
             <!-- 左侧 SFTP 面板 -->
-            <div v-if="connectionMode === 'ssh' || isLocalMode"
+            <div v-if="connectionMode === 'ssh' || isLocalMode || isRemoteLocalMode"
                  class="w-96 bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 flex flex-col relative group/sftp"
                  @dragover.prevent="onDragOver"
                  @dragleave.prevent="onDragLeave"
@@ -291,7 +343,7 @@
 
                 <div class="p-4 bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
                     <h3 class="text-lg font-semibold text-slate-800 dark:text-white flex items-center gap-2">
-                        <span>📂</span> <span v-if="isLocalMode">本地文件管理</span><span v-else>SFTP 文件管理</span>
+                        <span>📂</span> <span v-if="isLocalMode">本地文件管理</span><span v-else-if="isRemoteLocalMode">远程文件管理</span><span v-else>SFTP 文件管理</span>
                     </h3>
                 </div>
 
@@ -367,6 +419,7 @@
                         <h3 class="text-sm font-semibold text-slate-800 dark:text-white flex items-center gap-2">
                             <span>💻</span> 终端
                             <span v-if="connectionMode === 'ssh'" class="text-xs px-2 py-1 bg-blue-100 dark:bg-blue-600/20 text-blue-600 dark:text-blue-400 rounded font-medium">{{ config.username }}@{{ config.host }}</span>
+                            <span v-else-if="isRemoteLocalMode" class="text-xs px-2 py-1 bg-purple-100 dark:bg-purple-600/20 text-purple-600 dark:text-purple-400 rounded font-medium">远程: {{ remoteConfig.url }}</span>
                             <span v-else class="text-xs px-2 py-1 bg-green-100 dark:bg-green-600/20 text-green-600 dark:text-green-400 rounded font-medium">Local</span>
                         </h3>
                         <span class="text-xs text-slate-500 dark:text-slate-400 hidden sm:inline">👤 {{ currentUser }}</span>

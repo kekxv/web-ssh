@@ -88,6 +88,11 @@ createApp({
                 passphrase: '',
                 jumpHosts: null  // 跳板机配置数组
             },
+            remoteConfig: {
+                url: '',
+                username: '',
+                password: ''
+            },
             sessionId: '',
             sftpSessionId: '',
             ws: null,
@@ -103,6 +108,7 @@ createApp({
             useHttpFallback: false,
             httpPollingTimer: null,
             isLocalMode: false,
+            isRemoteLocalMode: false,
             showPasswordModal: false,
             passwordForm: {
                 oldPassword: '',
@@ -424,6 +430,13 @@ createApp({
                         this.loadFileList();
                     }, 300); // Small delay to let shell process the command
                 }
+
+                // Auto refresh file list on Enter in remote local mode
+                if (this.isRemoteLocalMode && (data === '\r' || data === '\n')) {
+                    setTimeout(() => {
+                        this.loadRemoteFileList();
+                    }, 300);
+                }
             });
         },
 
@@ -437,6 +450,8 @@ createApp({
         async connect() {
             if (this.connectionMode === 'local') {
                 this.connectLocal();
+            } else if (this.connectionMode === 'remoteLocal') {
+                await this.connectRemoteLocal();
             } else {
                 await this.connectSSH();
             }
@@ -687,6 +702,138 @@ createApp({
             this.loadFileList();
         },
 
+        async connectRemoteLocal() {
+            if (!this.remoteConfig.url || !this.remoteConfig.username || !this.remoteConfig.password) {
+                alert('请填写完整的远程服务器信息');
+                return;
+            }
+
+            try {
+                // 1. 登录远程 web-ssh
+                const loginResponse = await fetch('/api/remote/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        url: this.remoteConfig.url,
+                        username: this.remoteConfig.username,
+                        password: this.remoteConfig.password
+                    })
+                });
+
+                if (!loginResponse.ok) {
+                    const error = await loginResponse.json();
+                    alert('登录远程服务器失败：' + (error.error || '未知错误'));
+                    return;
+                }
+
+                const loginData = await loginResponse.json();
+                this.sessionId = loginData.session_id;
+                this.isRemoteLocalMode = true;
+
+                // 2. 连接远程终端
+                this.connectRemoteTerminal();
+
+                // 3. 加载文件列表
+                this.connected = true;
+                this.currentPath = '~';
+                this.defaultPath = '~';
+
+                setTimeout(() => {
+                    if (this.fitAddon) {
+                        this.fitAddon.fit();
+                        const dimensions = this.getTerminalDimensions();
+                        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                            const encoder = new TextEncoder();
+                            const message = JSON.stringify({
+                                type: 'resize',
+                                cols: dimensions.cols,
+                                rows: dimensions.rows
+                            });
+                            this.ws.send(encoder.encode(message));
+                        }
+                    }
+                    // 自动聚焦终端
+                    if (this.terminal) {
+                        this.terminal.focus();
+                    }
+                }, 100);
+
+                this.loadRemoteFileList();
+            } catch (error) {
+                alert('连接远程服务器失败：' + error.message);
+            }
+        },
+
+        connectRemoteTerminal() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws/remote/terminal?session_id=${encodeURIComponent(this.sessionId)}`;
+
+            this.ws = new WebSocket(wsUrl);
+            this.ws.binaryType = 'arraybuffer';
+
+            this.ws.onopen = () => {
+                console.log('Remote terminal connected');
+                this.fitAddon.fit();
+                const dimensions = this.getTerminalDimensions();
+                const encoder = new TextEncoder();
+                const message = JSON.stringify({
+                    type: 'resize',
+                    cols: dimensions.cols,
+                    rows: dimensions.rows
+                });
+                this.ws.send(encoder.encode(message));
+            };
+
+            this.ws.onmessage = (event) => {
+                if (event.data instanceof ArrayBuffer) {
+                    const decoder = new TextDecoder('utf-8');
+                    const text = decoder.decode(new Uint8Array(event.data));
+                    this.terminal.write(text);
+                } else {
+                    const data = event.data;
+                    try {
+                        const msg = JSON.parse(data);
+                        if (msg.type === 'error') {
+                            this.terminal.write(`\r\n\x1b[31m${msg.message}\x1b[0m\r\n`);
+                            return;
+                        }
+                    } catch (e) {
+                        // Not JSON, treat as terminal output
+                    }
+                    this.terminal.write(data);
+                }
+            };
+
+            this.ws.onclose = () => {
+                console.log('Remote terminal disconnected');
+                this.terminal.write('\r\n\x1b[31m 远程连接已断开\x1b[0m\r\n');
+            };
+
+            this.ws.onerror = (error) => {
+                console.error('Remote WebSocket error:', error);
+            };
+        },
+
+        async loadRemoteFileList() {
+            if (!this.sessionId) return;
+
+            try {
+                const response = await fetch(`/api/remote/file/list?session_id=${encodeURIComponent(this.sessionId)}&path=${encodeURIComponent(this.currentPath)}`);
+                const data = await response.json();
+
+                if (data.success) {
+                    this.fileList = data.data || [];
+                    if (data.path) {
+                        this.currentPath = data.path;
+                    }
+                } else {
+                    console.error('Failed to load remote file list:', data.error);
+                }
+            } catch (error) {
+                console.error('Failed to load remote file list:', error);
+            }
+        },
+
         async connectLocalHttp() {
             try {
                 const response = await fetch('/api/local/connect', {
@@ -862,7 +1009,12 @@ createApp({
                 fetch(`/api/local/close?session_id=${encodeURIComponent(this.sessionId)}`, { method: 'POST' });
             }
 
-            if (this.sessionId && !this.useHttpFallback) {
+            // 关闭远程本地会话
+            if (this.sessionId && this.isRemoteLocalMode) {
+                fetch(`/api/remote/disconnect?session_id=${encodeURIComponent(this.sessionId)}`, { method: 'POST' });
+            }
+
+            if (this.sessionId && !this.useHttpFallback && !this.isRemoteLocalMode) {
                 fetch(`/api/ssh/disconnect?session_id=${this.sessionId}`, { method: 'POST' });
             }
             if (this.sftpSessionId) {
@@ -877,6 +1029,7 @@ createApp({
             this.config.privateKey = '';
             this.config.passphrase = '';
             this.useHttpFallback = false;
+            this.isRemoteLocalMode = false;
         },
 
         // 获取默认路径（HOME）
@@ -908,7 +1061,13 @@ createApp({
         },
 
         async loadFileList() {
-            if (!this.sftpSessionId && !this.isLocalMode) return;
+            if (!this.sftpSessionId && !this.isLocalMode && !this.isRemoteLocalMode) return;
+
+            // 如果是远程本地模式，使用 loadRemoteFileList
+            if (this.isRemoteLocalMode) {
+                await this.loadRemoteFileList();
+                return;
+            }
 
             try {
                 let url;
@@ -971,11 +1130,13 @@ createApp({
 
         async downloadFile(file) {
             let downloadUrl;
-            if (this.isLocalMode) {
-                const path = this.currentPath === '/' ? '/' + file.name : this.currentPath + '/' + file.name;
+            const path = this.currentPath === '/' ? '/' + file.name : this.currentPath + '/' + file.name;
+            if (this.isRemoteLocalMode) {
+                downloadUrl = `/api/remote/file/download?session_id=${encodeURIComponent(this.sessionId)}&path=${encodeURIComponent(path)}`;
+            } else if (this.isLocalMode) {
                 downloadUrl = `/api/local/file/download?path=${encodeURIComponent(path)}`;
             } else {
-                downloadUrl = `/api/sftp/download?session_id=${this.sftpSessionId}&path=${encodeURIComponent(this.currentPath + '/' + file.name)}`;
+                downloadUrl = `/api/sftp/download?session_id=${this.sftpSessionId}&path=${encodeURIComponent(path)}`;
             }
             const a = document.createElement('a');
             a.href = downloadUrl;
@@ -1027,7 +1188,9 @@ createApp({
             try {
                 this.uploadProgress = 10;
                 let url;
-                if (this.isLocalMode) {
+                if (this.isRemoteLocalMode) {
+                    url = `/api/remote/file/upload?session_id=${encodeURIComponent(this.sessionId)}&path=${encodeURIComponent(remotePath)}`;
+                } else if (this.isLocalMode) {
                     url = `/api/local/file/upload?path=${encodeURIComponent(remotePath)}`;
                 } else {
                     url = `/api/sftp/upload?session_id=${this.sftpSessionId}&path=${encodeURIComponent(remotePath)}`;
@@ -1060,7 +1223,9 @@ createApp({
 
             try {
                 let url;
-                if (this.isLocalMode) {
+                if (this.isRemoteLocalMode) {
+                    url = `/api/remote/file/mkdir?session_id=${encodeURIComponent(this.sessionId)}&path=${encodeURIComponent(remotePath)}`;
+                } else if (this.isLocalMode) {
                     url = `/api/local/file/mkdir?path=${encodeURIComponent(remotePath)}`;
                 } else {
                     url = `/api/sftp/mkdir?session_id=${this.sftpSessionId}&path=${encodeURIComponent(remotePath)}`;
@@ -1091,7 +1256,9 @@ createApp({
 
             try {
                 let url;
-                if (this.isLocalMode) {
+                if (this.isRemoteLocalMode) {
+                    url = `/api/remote/file/remove?session_id=${encodeURIComponent(this.sessionId)}&path=${encodeURIComponent(remotePath)}`;
+                } else if (this.isLocalMode) {
                     url = `/api/local/file/remove?path=${encodeURIComponent(remotePath)}`;
                 } else {
                     url = `/api/sftp/remove?session_id=${this.sftpSessionId}&path=${encodeURIComponent(remotePath)}`;
