@@ -117,7 +117,9 @@ createApp({
             passwordError: '',
             passwordSuccess: '',
             theme: localStorage.getItem('theme') || 'light',
-            isDragging: false
+            isDragging: false,
+            showFileManager: false,
+            fileViewMode: 'list'
         };
     },
 
@@ -125,6 +127,12 @@ createApp({
         theme(newTheme) {
             localStorage.setItem('theme', newTheme);
             this.applyTheme();
+        },
+
+        showFileManager(show) {
+            if (show) {
+                this.loadFileList();
+            }
         }
     },
 
@@ -1054,6 +1062,34 @@ createApp({
             }
         },
 
+        getPathSeparator(path) {
+            return path && path.includes('\\') ? '\\' : '/';
+        },
+
+        joinPath(parent, segment) {
+            if (!parent || parent === '') return segment;
+            const sep = this.getPathSeparator(parent);
+            if (parent === sep) return parent + segment;
+            if (sep === '\\' && parent.endsWith('\\')) return parent + segment;
+            return parent + sep + segment;
+        },
+
+        splitPath(path) {
+            if (!path) return [];
+            const sep = this.getPathSeparator(path);
+            return path.split(sep).filter(p => p);
+        },
+
+        formatModTime(timestamp) {
+            if (!timestamp) return '';
+            const date = new Date(timestamp * 1000);
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            return `${month}-${day} ${hours}:${minutes}`;
+        },
+
         // 回到 HOME 目录
         goHome() {
             this.currentPath = this.defaultPath;
@@ -1105,22 +1141,37 @@ createApp({
         },
 
         navigateUp() {
-            if (this.currentPath === '/' || this.currentPath === '') {
-                return;
-            }
-            const parts = this.currentPath.split('/').filter(p => p);
+            const sep = this.getPathSeparator(this.currentPath);
+            if (this.currentPath === sep || this.currentPath === '') return;
+            // Windows root check (e.g., C:\)
+            if (sep === '\\' && /^[A-Za-z]:\\$/.test(this.currentPath)) return;
+
+            const parts = this.splitPath(this.currentPath);
             parts.pop();
-            this.currentPath = '/' + parts.join('/');
-            if (!this.currentPath) this.currentPath = '/';
+            if (parts.length === 0) {
+                if (sep === '\\') {
+                    const match = this.currentPath.match(/^([A-Za-z]:)/);
+                    this.currentPath = match ? match[1] + '\\' : 'C:\\';
+                } else {
+                    this.currentPath = '/';
+                }
+            } else {
+                let result = parts.join(sep);
+                if (sep === '/' && !result.startsWith('/')) {
+                    result = '/' + result;
+                } else if (sep === '\\') {
+                    const origMatch = this.currentPath.match(/^([A-Za-z]:)/);
+                    if (origMatch && !result.match(/^[A-Za-z]:/)) {
+                        result = origMatch[1] + '\\' + result;
+                    }
+                }
+                this.currentPath = result;
+            }
             this.loadFileList();
         },
 
         navigateTo(dirName) {
-            if (this.currentPath === '/') {
-                this.currentPath = '/' + dirName;
-            } else {
-                this.currentPath = this.currentPath + '/' + dirName;
-            }
+            this.currentPath = this.joinPath(this.currentPath, dirName);
             this.loadFileList();
         },
 
@@ -1130,7 +1181,7 @@ createApp({
 
         async downloadFile(file) {
             let downloadUrl;
-            const path = this.currentPath === '/' ? '/' + file.name : this.currentPath + '/' + file.name;
+            const path = this.joinPath(this.currentPath, file.name);
             if (this.isRemoteLocalMode) {
                 downloadUrl = `/api/remote/file/download?session_id=${encodeURIComponent(this.sessionId)}&path=${encodeURIComponent(path)}`;
             } else if (this.isLocalMode) {
@@ -1183,7 +1234,7 @@ createApp({
             const formData = new FormData();
             formData.append('file', file);
 
-            const remotePath = this.currentPath === '/' ? '/' + file.name : this.currentPath + '/' + file.name;
+            const remotePath = this.joinPath(this.currentPath, file.name);
 
             try {
                 this.uploadProgress = 10;
@@ -1219,7 +1270,7 @@ createApp({
         async createFolder() {
             if (!this.newFolderName) return;
 
-            const remotePath = this.currentPath === '/' ? '/' + this.newFolderName : this.currentPath + '/' + this.newFolderName;
+            const remotePath = this.joinPath(this.currentPath, this.newFolderName);
 
             try {
                 let url;
@@ -1252,7 +1303,7 @@ createApp({
         async deleteFile(file) {
             if (!confirm(`确定要删除 ${file.name} 吗？`)) return;
 
-            const remotePath = this.currentPath === '/' ? '/' + file.name : this.currentPath + '/' + file.name;
+            const remotePath = this.joinPath(this.currentPath, file.name);
 
             try {
                 let url;
