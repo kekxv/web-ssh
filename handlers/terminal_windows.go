@@ -58,15 +58,19 @@ func (p *windowsPTY) Resize(rows, cols uint16) error {
 	return nil
 }
 
-func startLocalShell(username string) (PTY, error) {
+func startLocalShell(shell string) (PTY, error) {
+	if shell == "" {
+		shell = "powershell.exe"
+	}
+
 	// 1. Try ConPTY first (Windows 10 1809+)
-	cpty, err := conpty.Start("powershell.exe -NoLogo")
+	cpty, err := conpty.Start(shell)
 	if err == nil {
 		return &windowsPTY{cpty: cpty}, nil
 	}
 
 	// 2. Fallback to Pipe mode for older Windows or if ConPTY fails
-	cmd := exec.Command("powershell.exe", "-NoLogo")
+	cmd := exec.Command(shell)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -78,13 +82,7 @@ func startLocalShell(username string) (PTY, error) {
 	cmd.Stderr = os.Stdout
 
 	if err := cmd.Start(); err != nil {
-		// Try cmd.exe if powershell is not available
-		cmd = exec.Command("cmd.exe")
-		stdin, _ = cmd.StdinPipe()
-		stdout, _ = cmd.StdoutPipe()
-		if err := cmd.Start(); err != nil {
-			return nil, err
-		}
+		return nil, err
 	}
 
 	return &windowsPTY{
@@ -92,6 +90,24 @@ func startLocalShell(username string) (PTY, error) {
 		stdout: stdout,
 		cmd:    cmd,
 	}, nil
+}
+
+func GetAvailableShells(w http.ResponseWriter, r *http.Request) {
+	// PowerShell preferred; fall back to cmd
+	shells := []string{"powershell.exe", "cmd.exe"}
+	currentShell := "powershell.exe"
+	// Check if powershell is actually available
+	if _, err := exec.LookPath("powershell.exe"); err != nil {
+		currentShell = os.Getenv("COMSPEC")
+		if currentShell == "" {
+			currentShell = "cmd.exe"
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"shells":        shells,
+		"current_shell": currentShell,
+	})
 }
 
 func GetSystemUsers(w http.ResponseWriter, r *http.Request) {

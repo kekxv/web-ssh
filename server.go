@@ -205,6 +205,9 @@ func SetupServer(port int) *gin.Engine {
 		protectedApi.POST("/local/file/cd", func(c *gin.Context) {
 			handlers.LocalFileCd(c.Writer, c.Request)
 		})
+		protectedApi.GET("/local/shells", func(c *gin.Context) {
+			handlers.GetAvailableShells(c.Writer, c.Request)
+		})
 		// Remote proxy routes
 		protectedApi.POST("/remote/login", func(c *gin.Context) {
 			handlers.HandleRemoteLogin(c.Writer, c.Request)

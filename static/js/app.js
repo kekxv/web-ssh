@@ -119,7 +119,9 @@ createApp({
             theme: localStorage.getItem('theme') || 'light',
             isDragging: false,
             showFileManager: false,
-            fileViewMode: 'list'
+            fileViewMode: 'list',
+            localShell: 'bash',
+            availableShells: ['/bin/bash', '/bin/zsh', '/bin/sh']
         };
     },
 
@@ -132,6 +134,12 @@ createApp({
         showFileManager(show) {
             if (show) {
                 this.loadFileList();
+            }
+        },
+
+        connectionMode(mode) {
+            if (mode === 'local') {
+                this.fetchAvailableShells();
             }
         }
     },
@@ -222,6 +230,21 @@ createApp({
                 }
             } catch (error) {
                 console.error('Auth check failed:', error);
+            }
+        },
+
+        async fetchAvailableShells() {
+            try {
+                const response = await fetch('/api/local/shells');
+                const data = await response.json();
+                if (data.shells && data.shells.length > 0) {
+                    this.availableShells = data.shells;
+                    if (data.current_shell) {
+                        this.localShell = data.current_shell;
+                    }
+                }
+            } catch (error) {
+                // Fallback to defaults
             }
         },
 
@@ -650,7 +673,7 @@ createApp({
 
             // 先尝试 WebSocket 连接（通过 Cookie 认证）
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${window.location.host}/ws/terminal?mode=local`;
+            const wsUrl = `${protocol}//${window.location.host}/ws/terminal?mode=local&shell=${encodeURIComponent(this.localShell)}`;
 
             // 创建临时 WebSocket 测试连接
             const testWs = new WebSocket(wsUrl);
@@ -847,7 +870,7 @@ createApp({
                 const response = await fetch('/api/local/connect', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({})
+                    body: JSON.stringify({ shell: this.localShell })
                 });
 
                 if (!response.ok) {
@@ -939,6 +962,9 @@ createApp({
             let wsUrl = `${protocol}//${window.location.host}/ws/terminal?mode=${mode}`;
             if (mode === 'ssh' && this.sessionId) {
                 wsUrl += `&session_id=${encodeURIComponent(this.sessionId)}`;
+            }
+            if (mode === 'local') {
+                wsUrl += `&shell=${encodeURIComponent(this.localShell)}`;
             }
 
             this.ws = new WebSocket(wsUrl);
@@ -1063,14 +1089,21 @@ createApp({
         },
 
         getPathSeparator(path) {
-            return path && path.includes('\\') ? '\\' : '/';
+            if (!path) return '/';
+            if (path.includes('\\')) return '\\';
+            // Windows drive letter without backslash (e.g., "C:")
+            if (/^[A-Za-z]:$/.test(path)) return '\\';
+            return '/';
         },
 
         joinPath(parent, segment) {
             if (!parent || parent === '') return segment;
             const sep = this.getPathSeparator(parent);
             if (parent === sep) return parent + segment;
+            // Windows root (e.g., "C:\")
             if (sep === '\\' && parent.endsWith('\\')) return parent + segment;
+            // Windows bare drive letter (e.g., "C:")
+            if (sep === '\\' && /^[A-Za-z]:$/.test(parent)) return parent + sep + segment;
             return parent + sep + segment;
         },
 
@@ -1163,6 +1196,10 @@ createApp({
                     const origMatch = this.currentPath.match(/^([A-Za-z]:)/);
                     if (origMatch && !result.match(/^[A-Za-z]:/)) {
                         result = origMatch[1] + '\\' + result;
+                    }
+                    // Ensure drive letter has trailing backslash when it's the root
+                    if (/^[A-Za-z]:$/.test(result)) {
+                        result = result + '\\';
                     }
                 }
                 this.currentPath = result;

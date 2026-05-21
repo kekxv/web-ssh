@@ -66,6 +66,7 @@ func (h *TerminalHandler) HandleTerminal(w http.ResponseWriter, r *http.Request)
 	sessionID := r.URL.Query().Get("session_id")
 	mode := r.URL.Query().Get("mode") // "ssh" or "local"
 	username := r.URL.Query().Get("username") // optional username for local login
+	shell := r.URL.Query().Get("shell") // optional shell for local mode
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -92,7 +93,7 @@ func (h *TerminalHandler) HandleTerminal(w http.ResponseWriter, r *http.Request)
 	log.Printf("Terminal connected: %s (mode: %s, user: %s)", sessionID, mode, username)
 
 	if mode == "local" {
-		h.handleLocalBash(ts, username)
+		h.handleLocalBash(ts, username, shell)
 	} else {
 		h.handleSSHSession(ts, sessionID)
 	}
@@ -201,9 +202,9 @@ func (h *TerminalHandler) sshToWS(reader io.Reader, ts *TerminalSession) {
 	}
 }
 
-func (h *TerminalHandler) handleLocalBash(ts *TerminalSession, username string) {
+func (h *TerminalHandler) handleLocalBash(ts *TerminalSession, username string, shell string) {
 	// Use platform-specific startLocalShell
-	proc, err := startLocalShell(username)
+	proc, err := startLocalShell(shell)
 	if err != nil {
 		ts.SendError(fmt.Sprintf("Failed to start local shell: %v", err))
 		return
@@ -395,8 +396,14 @@ func LocalSessionRequest(w http.ResponseWriter, r *http.Request, h *TerminalHand
 
 	sessionID := generateSessionID()
 
+	// Read optional shell parameter from request body
+	var req struct {
+		Shell string `json:"shell"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+
 	// Use platform-specific startLocalShell
-	ptmx, err := startLocalShell("")
+	ptmx, err := startLocalShell(req.Shell)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to start shell: %v", err), http.StatusInternalServerError)
 		return
