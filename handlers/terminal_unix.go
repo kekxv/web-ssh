@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"sort"
 	"strings"
 
 	"github.com/creack/pty"
@@ -24,7 +25,7 @@ func (p *unixPTY) Resize(rows, cols uint16) error {
 
 func startLocalShell(shell string) (PTY, error) {
 	if shell == "" {
-		shell = "bash"
+		shell = "/bin/zsh"
 	}
 	cmd := exec.Command(shell, "--login")
 	ptmx, err := pty.Start(cmd)
@@ -37,16 +38,16 @@ func startLocalShell(shell string) (PTY, error) {
 func GetAvailableShells(w http.ResponseWriter, r *http.Request) {
 	currentShell := os.Getenv("SHELL")
 	if currentShell == "" {
-		currentShell = "/bin/bash"
+		currentShell = "/bin/zsh"
 	}
 
 	file, err := os.Open("/etc/shells")
 	if err != nil {
-		shells := []string{"/bin/bash", "/bin/zsh", "/bin/sh"}
+		shells := defaultUnixShells()
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"shells":        shells,
-			"current_shell": currentShell,
+			"current_shell": preferredUnixShell(shells, currentShell),
 		})
 		return
 	}
@@ -62,14 +63,66 @@ func GetAvailableShells(w http.ResponseWriter, r *http.Request) {
 		shells = append(shells, line)
 	}
 	if len(shells) == 0 {
-		shells = []string{"/bin/bash", "/bin/zsh", "/bin/sh"}
+		shells = defaultUnixShells()
 	}
+	sortUnixShells(shells)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"shells":        shells,
-		"current_shell": currentShell,
+		"current_shell": preferredUnixShell(shells, currentShell),
 	})
+}
+
+func defaultUnixShells() []string {
+	return []string{"/bin/zsh", "/bin/bash", "/bin/sh"}
+}
+
+func sortUnixShells(shells []string) {
+	sort.SliceStable(shells, func(i, j int) bool {
+		return shellPriority(shells[i]) < shellPriority(shells[j])
+	})
+}
+
+func preferredUnixShell(shells []string, currentShell string) string {
+	priorities := []string{"zsh", "bash", "sh"}
+	for _, name := range priorities {
+		for _, shell := range shells {
+			if shellBaseName(shell) == name {
+				return shell
+			}
+		}
+	}
+	for _, shell := range shells {
+		if shell == currentShell {
+			return shell
+		}
+	}
+	if len(shells) > 0 {
+		return shells[0]
+	}
+	return currentShell
+}
+
+func shellPriority(shell string) int {
+	switch shellBaseName(shell) {
+	case "zsh":
+		return 0
+	case "bash":
+		return 1
+	case "sh":
+		return 2
+	default:
+		return 3
+	}
+}
+
+func shellBaseName(shell string) string {
+	parts := strings.Split(shell, "/")
+	if len(parts) == 0 {
+		return shell
+	}
+	return parts[len(parts)-1]
 }
 
 func GetSystemUsers(w http.ResponseWriter, r *http.Request) {

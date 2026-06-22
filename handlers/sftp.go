@@ -124,6 +124,16 @@ func (h *SFTPHandler) HandleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	info, err := client.Stat(filePath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to stat file: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if info.IsDir() {
+		http.Error(w, "cannot download directory", http.StatusBadRequest)
+		return
+	}
+
 	file, err := client.Open(filePath)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to open file: %v", err), http.StatusInternalServerError)
@@ -135,8 +145,11 @@ func (h *SFTPHandler) HandleDownload(w http.ResponseWriter, r *http.Request) {
 	filename := filepath.Base(filePath)
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
 	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", info.Size()))
 
-	io.Copy(w, file)
+	if _, err := io.Copy(w, file); err != nil {
+		log.Printf("failed to stream SFTP download %s: %v", filePath, err)
+	}
 }
 
 // HandleUpload handles file upload requests
@@ -149,16 +162,9 @@ func (h *SFTPHandler) HandleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse multipart form (max 100MB)
-	err := r.ParseMultipartForm(100 << 20)
+	file, err := uploadedFilePart(r)
 	if err != nil {
-		sendSFTPError(w, fmt.Sprintf("failed to parse form: %v", err))
-		return
-	}
-
-	file, header, err := r.FormFile("file")
-	if err != nil {
-		sendSFTPError(w, fmt.Sprintf("failed to get file: %v", err))
+		sendSFTPError(w, err.Error())
 		return
 	}
 	defer file.Close()
@@ -169,23 +175,25 @@ func (h *SFTPHandler) HandleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create remote file
 	dstFile, err := client.Create(filePath)
 	if err != nil {
 		sendSFTPError(w, fmt.Sprintf("failed to create remote file: %v", err))
 		return
 	}
-	defer dstFile.Close()
 
-	// Copy file content
 	_, err = io.Copy(dstFile, file)
 	if err != nil {
+		dstFile.Close()
 		sendSFTPError(w, fmt.Sprintf("failed to upload file: %v", err))
+		return
+	}
+	if err := dstFile.Close(); err != nil {
+		sendSFTPError(w, fmt.Sprintf("failed to close remote file: %v", err))
 		return
 	}
 
 	sendSFTPResponse(w, map[string]string{
-		"filename": header.Filename,
+		"filename": file.FileName(),
 		"path":     filePath,
 	})
 }

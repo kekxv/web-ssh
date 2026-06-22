@@ -411,7 +411,10 @@ func HandleRemoteFileDownload(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", contentLength)
 	}
 
-	io.Copy(w, resp.Body)
+	w.WriteHeader(resp.StatusCode)
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		log.Printf("failed to stream remote download %s: %v", path, err)
+	}
 }
 
 // HandleRemoteFileUpload 处理远程文件上传
@@ -434,53 +437,85 @@ func HandleRemoteFileUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 解析 multipart form
-	err := r.ParseMultipartForm(100 << 20)
+	file, err := uploadedFilePart(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	file, header, err := r.FormFile("file")
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	defer file.Close()
 
 	// 创建请求到远程服务器
 	remoteURL := remoteSession.URL + "/api/local/file/upload?path=" + url.QueryEscape(path)
 
-	// 构建 multipart form
-	var buf bytes.Buffer
-	writer := multipart.NewWriter(&buf)
+	pr, pw := io.Pipe()
+	writer := multipart.NewWriter(pw)
 
-	part, err := writer.CreateFormFile("file", header.Filename)
+	req, err := http.NewRequest("POST", remoteURL, pr)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	io.Copy(part, file)
-	writer.Close()
-
-	req, err := http.NewRequest("POST", remoteURL, &buf)
-	if err != nil {
+		file.Close()
+		pr.Close()
+		pw.Close()
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.AddCookie(&http.Cookie{Name: "session_id", Value: remoteSession.Cookie})
 
+	uploadErrCh := make(chan error, 1)
+	go func() {
+		defer file.Close()
+
+		part, err := writer.CreateFormFile("file", file.FileName())
+		if err != nil {
+			writer.Close()
+			pw.CloseWithError(err)
+			uploadErrCh <- err
+			return
+		}
+
+		if _, err := io.Copy(part, file); err != nil {
+			writer.Close()
+			pw.CloseWithError(err)
+			uploadErrCh <- err
+			return
+		}
+
+		if err := writer.Close(); err != nil {
+			pw.CloseWithError(err)
+			uploadErrCh <- err
+			return
+		}
+
+		uploadErrCh <- pw.Close()
+	}()
+
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
+		pr.Close()
+		go logAsyncUploadError(uploadErrCh)
 		http.Error(w, "请求远程服务器失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	defer resp.Body.Close()
 
 	w.Header().Set("Content-Type", "application/json")
-	io.Copy(w, resp.Body)
+	w.WriteHeader(resp.StatusCode)
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		log.Printf("failed to copy remote upload response: %v", err)
+	}
+	select {
+	case uploadErr := <-uploadErrCh:
+		if uploadErr != nil {
+			log.Printf("failed to stream upload to remote server: %v", uploadErr)
+		}
+	default:
+	}
+}
+
+func logAsyncUploadError(uploadErrCh <-chan error) {
+	if uploadErr := <-uploadErrCh; uploadErr != nil {
+		log.Printf("failed to stream upload to remote server: %v", uploadErr)
+	}
 }
 
 // HandleRemoteFileMkdir 处理远程创建目录

@@ -644,7 +644,9 @@ func LocalFileDownload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filepath.Base(path)))
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", info.Size()))
-	io.Copy(w, file)
+	if _, err := io.Copy(w, file); err != nil {
+		log.Printf("failed to stream local download %s: %v", path, err)
+	}
 }
 
 // LocalFileUpload handles local file upload
@@ -655,13 +657,7 @@ func LocalFileUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := r.ParseMultipartForm(100 << 20)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	file, _, err := r.FormFile("file")
+	file, err := uploadedFilePart(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -673,9 +669,16 @@ func LocalFileUpload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	defer dst.Close()
 
-	io.Copy(dst, file)
+	if _, err := io.Copy(dst, file); err != nil {
+		dst.Close()
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := dst.Close(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})

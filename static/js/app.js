@@ -103,7 +103,19 @@ createApp({
             defaultPath: '~',
             showMkdirModal: false,
             newFolderName: '',
-            uploadProgress: 0,
+            transfer: {
+                active: false,
+                type: '',
+                fileName: '',
+                progress: 0,
+                loaded: 0,
+                total: 0,
+                speed: 0,
+                status: '',
+                error: '',
+                startedAt: 0
+            },
+            transferClearTimer: null,
             // HTTP 长连接相关
             useHttpFallback: false,
             httpPollingTimer: null,
@@ -120,8 +132,8 @@ createApp({
             isDragging: false,
             showFileManager: false,
             fileViewMode: 'list',
-            localShell: 'bash',
-            availableShells: ['/bin/bash', '/bin/zsh', '/bin/sh']
+            localShell: '/bin/zsh',
+            availableShells: ['/bin/zsh', '/bin/bash', '/bin/sh']
         };
     },
 
@@ -239,13 +251,25 @@ createApp({
                 const data = await response.json();
                 if (data.shells && data.shells.length > 0) {
                     this.availableShells = data.shells;
-                    if (data.current_shell) {
-                        this.localShell = data.current_shell;
-                    }
+                    this.localShell = this.preferredShell(data.shells, data.current_shell);
                 }
             } catch (error) {
                 // Fallback to defaults
             }
+        },
+
+        preferredShell(shells, currentShell) {
+            const priorities = ['zsh', 'bash', 'sh'];
+            for (const name of priorities) {
+                const shell = shells.find(item => this.shellBaseName(item) === name);
+                if (shell) return shell;
+            }
+            if (currentShell && shells.includes(currentShell)) return currentShell;
+            return shells[0] || currentShell || '/bin/sh';
+        },
+
+        shellBaseName(shell) {
+            return String(shell || '').split(/[\\/]/).pop();
         },
 
         async login() {
@@ -1216,6 +1240,106 @@ createApp({
             this.loadFileList();
         },
 
+        startTransfer(type, fileName, total, status) {
+            if (this.transferClearTimer) {
+                clearTimeout(this.transferClearTimer);
+                this.transferClearTimer = null;
+            }
+
+            this.transfer = {
+                active: true,
+                type,
+                fileName,
+                progress: 0,
+                loaded: 0,
+                total: total || 0,
+                speed: 0,
+                status: status || '',
+                error: '',
+                startedAt: performance.now()
+            };
+        },
+
+        updateTransferProgress(loaded, total, status) {
+            const nextTotal = total || this.transfer.total || 0;
+            const elapsed = Math.max((performance.now() - this.transfer.startedAt) / 1000, 0.001);
+            const progress = nextTotal > 0 ? Math.min(100, Math.round((loaded / nextTotal) * 100)) : 0;
+
+            this.transfer.loaded = loaded;
+            this.transfer.total = nextTotal;
+            this.transfer.speed = loaded / elapsed;
+            this.transfer.progress = progress;
+            if (status) {
+                this.transfer.status = status;
+            }
+        },
+
+        completeTransfer(status) {
+            const total = this.transfer.total || this.transfer.loaded;
+            this.transfer.loaded = total;
+            this.transfer.total = total;
+            this.transfer.progress = 100;
+            this.transfer.status = status || '完成';
+            this.transfer.error = '';
+            this.scheduleTransferClear();
+        },
+
+        failTransfer(message) {
+            this.transfer.active = true;
+            this.transfer.status = '失败';
+            this.transfer.error = message;
+        },
+
+        clearTransfer() {
+            if (this.transferClearTimer) {
+                clearTimeout(this.transferClearTimer);
+                this.transferClearTimer = null;
+            }
+            this.transfer = {
+                active: false,
+                type: '',
+                fileName: '',
+                progress: 0,
+                loaded: 0,
+                total: 0,
+                speed: 0,
+                status: '',
+                error: '',
+                startedAt: 0
+            };
+        },
+
+        scheduleTransferClear() {
+            if (this.transferClearTimer) {
+                clearTimeout(this.transferClearTimer);
+            }
+            this.transferClearTimer = setTimeout(() => {
+                this.clearTransfer();
+            }, 1200);
+        },
+
+        async readErrorResponse(response) {
+            const text = await response.text();
+            if (!text) return response.statusText || `HTTP ${response.status}`;
+            try {
+                const data = JSON.parse(text);
+                return data.error || data.message || text;
+            } catch (error) {
+                return text;
+            }
+        },
+
+        saveBlob(blob, fileName) {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        },
+
         async downloadFile(file) {
             let downloadUrl;
             const path = this.joinPath(this.currentPath, file.name);
@@ -1226,12 +1350,47 @@ createApp({
             } else {
                 downloadUrl = `/api/sftp/download?session_id=${this.sftpSessionId}&path=${encodeURIComponent(path)}`;
             }
-            const a = document.createElement('a');
-            a.href = downloadUrl;
-            a.download = file.name;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
+
+            this.startTransfer('download', file.name, file.size || 0, '准备下载...');
+            try {
+                const response = await fetch(downloadUrl);
+                if (!response.ok) {
+                    throw new Error(await this.readErrorResponse(response));
+                }
+
+                const headerTotal = Number(response.headers.get('Content-Length')) || 0;
+                const total = headerTotal || file.size || 0;
+                this.updateTransferProgress(0, total, '下载中...');
+
+                if (!response.body || !response.body.getReader) {
+                    const blob = await response.blob();
+                    this.updateTransferProgress(blob.size, total || blob.size, '保存文件...');
+                    this.saveBlob(blob, file.name);
+                    this.completeTransfer('下载完成');
+                    return;
+                }
+
+                const reader = response.body.getReader();
+                const chunks = [];
+                let loaded = 0;
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    chunks.push(value);
+                    loaded += value.byteLength;
+                    this.updateTransferProgress(loaded, total, '下载中...');
+                }
+
+                const blob = new Blob(chunks, {
+                    type: response.headers.get('Content-Type') || 'application/octet-stream'
+                });
+                this.updateTransferProgress(total || loaded, total || loaded, '保存文件...');
+                this.saveBlob(blob, file.name);
+                this.completeTransfer('下载完成');
+            } catch (error) {
+                this.failTransfer(`文件 ${file.name} 下载失败：${error.message}`);
+            }
         },
 
         triggerUpload() {
@@ -1274,7 +1433,6 @@ createApp({
             const remotePath = this.joinPath(this.currentPath, file.name);
 
             try {
-                this.uploadProgress = 10;
                 let url;
                 if (this.isRemoteLocalMode) {
                     url = `/api/remote/file/upload?session_id=${encodeURIComponent(this.sessionId)}&path=${encodeURIComponent(remotePath)}`;
@@ -1284,24 +1442,58 @@ createApp({
                     url = `/api/sftp/upload?session_id=${this.sftpSessionId}&path=${encodeURIComponent(remotePath)}`;
                 }
 
-                const response = await fetch(url, {
-                    method: 'POST',
-                    body: formData
-                });
-
-                this.uploadProgress = 100;
-                const data = await response.json();
+                this.startTransfer('upload', file.name, file.size || 0, '准备上传...');
+                const data = await this.uploadWithProgress(url, formData);
 
                 if (data.success) {
-                    this.loadFileList();
+                    this.completeTransfer('上传完成');
+                    await this.loadFileList();
                 } else {
-                    alert(`文件 ${file.name} 上传失败：` + (data.error || '未知错误'));
+                    throw new Error(data.error || '未知错误');
                 }
             } catch (error) {
-                alert(`文件 ${file.name} 上传失败：` + error.message);
-            } finally {
-                setTimeout(() => { this.uploadProgress = 0; }, 1000);
+                this.failTransfer(`文件 ${file.name} 上传失败：${error.message}`);
             }
+        },
+
+        uploadWithProgress(url, formData) {
+            return new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', url, true);
+
+                xhr.upload.onprogress = (event) => {
+                    if (event.lengthComputable) {
+                        const status = event.loaded >= event.total ? '服务器处理中...' : '上传中...';
+                        this.updateTransferProgress(event.loaded, event.total, status);
+                    } else {
+                        this.transfer.status = '上传中...';
+                    }
+                };
+
+                xhr.onload = () => {
+                    let data = null;
+                    try {
+                        data = xhr.responseText ? JSON.parse(xhr.responseText) : {};
+                    } catch (error) {
+                        reject(new Error(xhr.responseText || '服务器响应格式错误'));
+                        return;
+                    }
+
+                    if (xhr.status >= 200 && xhr.status < 300 && data.success !== false) {
+                        this.updateTransferProgress(this.transfer.total || this.transfer.loaded, this.transfer.total || this.transfer.loaded, '处理完成...');
+                        resolve(data);
+                        return;
+                    }
+
+                    reject(new Error((data && data.error) || xhr.responseText || `上传失败 (${xhr.status})`));
+                };
+
+                xhr.onerror = () => reject(new Error('网络错误或连接已断开'));
+                xhr.onabort = () => reject(new Error('上传已取消'));
+                xhr.ontimeout = () => reject(new Error('上传超时'));
+
+                xhr.send(formData);
+            });
         },
 
         async createFolder() {
@@ -1459,11 +1651,16 @@ createApp({
         },
 
         formatFileSize(size) {
-            if (size === 0) return '0 B';
+            if (!size || size <= 0) return '0 B';
             const k = 1024;
             const sizes = ['B', 'KB', 'MB', 'GB'];
-            const i = Math.floor(Math.log(size) / Math.log(k));
+            const i = Math.min(Math.max(Math.floor(Math.log(size) / Math.log(k)), 0), sizes.length - 1);
             return Math.round(size / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+        },
+
+        formatSpeed(bytesPerSecond) {
+            if (!bytesPerSecond || bytesPerSecond < 0) return '0 B/s';
+            return `${this.formatFileSize(bytesPerSecond)}/s`;
         }
     }
 }).mount('#app');
