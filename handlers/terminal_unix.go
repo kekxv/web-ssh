@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/user"
 	"runtime"
 	"sort"
 	"strings"
@@ -28,6 +29,22 @@ func startLocalShell(shell string) (PTY, error) {
 		shell = "/bin/zsh"
 	}
 	cmd := exec.Command(shell, "--login")
+
+	// 获取当前用户信息，设置正确的 HOME 和工作目录
+	currentUser, err := user.Current()
+	if err == nil {
+		cmd.Dir = currentUser.HomeDir
+		// 继承当前环境变量，但确保 HOME 正确
+		cmd.Env = append(os.Environ(), "HOME="+currentUser.HomeDir)
+	} else {
+		// 如果获取用户信息失败，尝试从环境变量获取 HOME
+		homeDir := os.Getenv("HOME")
+		if homeDir == "" {
+			homeDir = "/root"
+		}
+		cmd.Dir = homeDir
+	}
+
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
 		return nil, err

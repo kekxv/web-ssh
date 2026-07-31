@@ -239,6 +239,22 @@ func SetupServer(port int) *gin.Engine {
 		protectedApi.POST("/admin/users/delete", func(c *gin.Context) {
 			handlers.HandleDeleteUser(c.Writer, c.Request)
 		})
+
+		// Docker routes
+		protectedApi.GET("/docker/available", handlers.DockerAvailable)
+		protectedApi.GET("/docker/containers", handlers.DockerListContainers)
+		protectedApi.GET("/docker/images", handlers.DockerListImages)
+		protectedApi.POST("/docker/container/start", handlers.DockerStartContainer)
+		protectedApi.POST("/docker/container/stop", handlers.DockerStopContainer)
+		protectedApi.POST("/docker/container/restart", handlers.DockerRestartContainer)
+		protectedApi.POST("/docker/container/remove", handlers.DockerRemoveContainer)
+		protectedApi.GET("/docker/container/logs", handlers.DockerContainerLogs)
+		protectedApi.GET("/docker/container/log-size", handlers.DockerContainerLogSize)
+		protectedApi.POST("/docker/container/clear-logs", handlers.DockerClearLogs)
+		protectedApi.GET("/docker/container/stats", handlers.DockerContainerStats)
+
+		// System info
+		protectedApi.GET("/system/info", handlers.SystemInfo)
 	}
 
 	// WebSocket routes

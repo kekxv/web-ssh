@@ -133,7 +133,26 @@ createApp({
             showFileManager: false,
             fileViewMode: 'list',
             localShell: '/bin/zsh',
-            availableShells: ['/bin/zsh', '/bin/bash', '/bin/sh']
+            availableShells: ['/bin/zsh', '/bin/bash', '/bin/sh'],
+
+            // 系统仪表盘
+            systemInfo: null,
+            systemInfoTimer: null,
+            showDashboard: false,
+
+            // Docker 管理
+            dockerAvailable: false,
+            showDockerModal: false,
+            dockerTab: 'containers',
+            dockerContainers: [],
+            dockerImages: [],
+            dockerLoading: false,
+            dockerContainerLogs: '',
+            dockerLogSize: 0,
+            dockerLogPath: '',
+            dockerSelectedContainer: '',
+            dockerLogsLoading: false,
+            dockerStatsMap: {}
         };
     },
 
@@ -152,6 +171,28 @@ createApp({
         connectionMode(mode) {
             if (mode === 'local') {
                 this.fetchAvailableShells();
+            }
+        },
+
+        connected(val) {
+            if (val) {
+                this.fetchSystemInfo();
+                this.systemInfoTimer = setInterval(this.fetchSystemInfo, 10000);
+                this.checkDockerAvailable();
+            } else {
+                if (this.systemInfoTimer) {
+                    clearInterval(this.systemInfoTimer);
+                    this.systemInfoTimer = null;
+                }
+                this.systemInfo = null;
+                this.dockerAvailable = false;
+            }
+        },
+
+        showDockerModal(val) {
+            if (val) {
+                this.fetchDockerContainers();
+                this.fetchDockerImages();
             }
         }
     },
@@ -326,6 +367,10 @@ createApp({
             if (this.httpPollingTimer) {
                 clearTimeout(this.httpPollingTimer);
             }
+            if (this.systemInfoTimer) {
+                clearInterval(this.systemInfoTimer);
+                this.systemInfoTimer = null;
+            }
 
             this.isLoggedIn = false;
             this.currentUser = '';
@@ -335,6 +380,10 @@ createApp({
             this.fileList = [];
             this.loginForm.username = '';
             this.loginForm.password = '';
+            this.systemInfo = null;
+            this.dockerAvailable = false;
+            this.showDashboard = false;
+            this.showDockerModal = false;
         },
 
         async changePassword() {
@@ -1616,6 +1665,188 @@ createApp({
             if (jump.authMethod === 'password') {
                 jump.password = jump.password || '';
             }
+        },
+
+        // ==================== 系统仪表盘 ====================
+
+        async fetchSystemInfo() {
+            try {
+                var resp = await fetch('/api/system/info');
+                var data = await resp.json();
+                this.systemInfo = data;
+            } catch (e) {
+                console.error('Failed to fetch system info:', e);
+            }
+        },
+
+        openDashboard() {
+            this.showDashboard = true;
+        },
+
+        formatUptime(seconds) {
+            if (!seconds) return '未知';
+            var days = Math.floor(seconds / 86400);
+            var hours = Math.floor((seconds % 86400) / 3600);
+            var minutes = Math.floor((seconds % 3600) / 60);
+            if (days > 0) return days + '天' + hours + '小时' + minutes + '分钟';
+            if (hours > 0) return hours + '小时' + minutes + '分钟';
+            return minutes + '分钟';
+        },
+
+        getUsageColor(percent) {
+            if (percent >= 90) return '#ef4444';
+            if (percent >= 70) return '#f59e0b';
+            return '#22c55e';
+        },
+
+        // ==================== Docker 管理 ====================
+
+        async checkDockerAvailable() {
+            try {
+                var resp = await fetch('/api/docker/available');
+                var data = await resp.json();
+                this.dockerAvailable = data.available === true;
+            } catch (e) {
+                this.dockerAvailable = false;
+            }
+        },
+
+        async fetchDockerContainers() {
+            this.dockerLoading = true;
+            try {
+                var resp = await fetch('/api/docker/containers');
+                var data = await resp.json();
+                this.dockerContainers = data.containers || [];
+            } catch (e) {
+                console.error('Failed to fetch containers:', e);
+            }
+            this.dockerLoading = false;
+        },
+
+        async fetchDockerImages() {
+            this.dockerLoading = true;
+            try {
+                var resp = await fetch('/api/docker/images');
+                var data = await resp.json();
+                this.dockerImages = data.images || [];
+            } catch (e) {
+                console.error('Failed to fetch images:', e);
+            }
+            this.dockerLoading = false;
+        },
+
+        async dockerAction(containerId, action) {
+            var payload = { id: containerId };
+            if (action === 'remove') {
+                if (!confirm('确认删除此容器？')) return;
+                payload.force = true;
+            }
+            try {
+                var resp = await fetch('/api/docker/container/' + action, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                var data = await resp.json();
+                if (data.success) {
+                    this.fetchDockerContainers();
+                } else {
+                    alert('操作失败: ' + (data.error || '未知错误'));
+                }
+            } catch (e) {
+                alert('操作失败: ' + e.message);
+            }
+        },
+
+        async viewContainerLogs(containerId) {
+            this.dockerSelectedContainer = containerId;
+            this.dockerLogsLoading = true;
+            this.dockerContainerLogs = '加载中...';
+
+            // 先获取当前容器的日志大小（从列表中查找）
+            var ctr = null;
+            for (var i = 0; i < this.dockerContainers.length; i++) {
+                if (this.dockerContainers[i].id === containerId) {
+                    ctr = this.dockerContainers[i];
+                    break;
+                }
+            }
+            if (ctr) {
+                this.dockerLogSize = ctr.log_size || 0;
+                this.dockerLogPath = ctr.log_path || '';
+            }
+
+            // 根据日志大小决定加载行数
+            var tail = 500;
+            if (this.dockerLogSize > 1073741824) { // > 1GB
+                tail = 200;
+            } else if (this.dockerLogSize > 104857600) { // > 100MB
+                tail = 300;
+            }
+
+            try {
+                var resp = await fetch('/api/docker/container/logs?id=' + encodeURIComponent(containerId) + '&tail=' + tail);
+                var data = await resp.json();
+                this.dockerContainerLogs = data.logs || '(无日志)';
+            } catch (e) {
+                this.dockerContainerLogs = '获取日志失败: ' + e.message;
+            }
+            this.dockerLogsLoading = false;
+        },
+
+        async clearContainerLogs(containerId) {
+            if (!confirm('确认清空此容器的日志？清空后无法恢复。')) return;
+            try {
+                var resp = await fetch('/api/docker/container/clear-logs', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: containerId })
+                });
+                var data = await resp.json();
+                if (data.success) {
+                    // 更新列表中该容器的日志大小
+                    for (var i = 0; i < this.dockerContainers.length; i++) {
+                        if (this.dockerContainers[i].id === containerId) {
+                            this.dockerContainers[i].log_size = 0;
+                            break;
+                        }
+                    }
+                    // 如果正在查看该容器的日志，更新面板
+                    if (this.dockerSelectedContainer === containerId) {
+                        this.dockerLogSize = 0;
+                        this.dockerContainerLogs = '(日志已清空)';
+                    }
+                    alert('日志已清空');
+                } else {
+                    alert('清空失败: ' + (data.error || '未知错误'));
+                }
+            } catch (e) {
+                alert('清空失败: ' + e.message);
+            }
+        },
+
+        formatDockerSize(bytes) {
+            if (!bytes || bytes <= 0) return '0 B';
+            var k = 1024;
+            var sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+            var i = Math.min(Math.max(Math.floor(Math.log(bytes) / Math.log(k)), 0), sizes.length - 1);
+            return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+        },
+
+        formatDockerTimestamp(ts) {
+            if (!ts) return '-';
+            var d = new Date(ts * 1000);
+            var pad = function(n) { return n < 10 ? '0' + n : '' + n; };
+            return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' +
+                   pad(d.getHours()) + ':' + pad(d.getMinutes());
+        },
+
+        getContainerStateClass(state) {
+            var s = (state || '').toLowerCase();
+            if (s === 'running') return 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400';
+            if (s === 'exited' || s === 'dead') return 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400';
+            if (s === 'paused') return 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-600 dark:text-yellow-400';
+            return 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-400';
         },
 
         // 根据文件扩展名返回图标
