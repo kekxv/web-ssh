@@ -1,6 +1,7 @@
 # 依赖
 node_modules/
 /vendor/
+.worktrees/
 
 # 编译产物
 *.exe
