@@ -7,6 +7,11 @@ import (
 	"net/http"
 )
 
+func copyDownloadSnapshot(dst io.Writer, src io.Reader, size int64) error {
+	_, err := io.CopyN(dst, src, size)
+	return err
+}
+
 func uploadedFilePart(r *http.Request) (*multipart.Part, error) {
 	reader, err := r.MultipartReader()
 	if err != nil {

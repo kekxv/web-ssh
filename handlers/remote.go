@@ -412,7 +412,7 @@ func HandleRemoteFileDownload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(resp.StatusCode)
-	if _, err := io.Copy(w, resp.Body); err != nil {
+	if err := copyDownloadSnapshot(w, resp.Body, resp.ContentLength); err != nil {
 		log.Printf("failed to stream remote download %s: %v", path, err)
 	}
 }

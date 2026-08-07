@@ -147,7 +147,7 @@ func (h *SFTPHandler) HandleDownload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", info.Size()))
 
-	if _, err := io.Copy(w, file); err != nil {
+	if err := copyDownloadSnapshot(w, file, info.Size()); err != nil {
 		log.Printf("failed to stream SFTP download %s: %v", filePath, err)
 	}
 }
