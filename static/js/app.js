@@ -134,6 +134,8 @@ createApp({
             fileViewMode: 'list',
             localShell: '/bin/zsh',
             availableShells: ['/bin/zsh', '/bin/bash', '/bin/sh'],
+            remoteShell: '/bin/bash',
+            remoteAvailableShells: ['/bin/bash', '/bin/sh'],
 
             // 系统仪表盘
             systemInfo: null,
@@ -175,7 +177,7 @@ createApp({
         },
 
         connected(val) {
-            if (val) {
+            if (val && this.managementSupported()) {
                 this.fetchSystemInfo();
                 this.systemInfoTimer = setInterval(this.fetchSystemInfo, 10000);
                 this.checkDockerAvailable();
@@ -186,11 +188,13 @@ createApp({
                 }
                 this.systemInfo = null;
                 this.dockerAvailable = false;
+                this.showDashboard = false;
+                this.showDockerModal = false;
             }
         },
 
         showDockerModal(val) {
-            if (val) {
+            if (val && this.managementSupported()) {
                 this.fetchDockerContainers();
                 this.fetchDockerImages();
             }
@@ -307,6 +311,29 @@ createApp({
             }
             if (currentShell && shells.includes(currentShell)) return currentShell;
             return shells[0] || currentShell || '/bin/sh';
+        },
+
+        selectAvailableShell(shells, selectedShell, currentShell) {
+            if (selectedShell && shells.includes(selectedShell)) {
+                return selectedShell;
+            }
+            return this.preferredShell(shells, currentShell);
+        },
+
+        async fetchRemoteAvailableShells() {
+            try {
+                const response = await fetch('/api/remote/shells?session_id=' + encodeURIComponent(this.sessionId));
+                if (!response.ok) {
+                    throw new Error('无法读取远端 Shell 列表');
+                }
+                const data = await response.json();
+                if (data.shells && data.shells.length > 0) {
+                    this.remoteAvailableShells = data.shells;
+                    this.remoteShell = this.selectAvailableShell(data.shells, this.remoteShell, data.current_shell);
+                }
+            } catch (error) {
+                console.warn('Failed to fetch remote shells:', error);
+            }
         },
 
         shellBaseName(shell) {
@@ -832,6 +859,7 @@ createApp({
 
                 const loginData = await loginResponse.json();
                 this.sessionId = loginData.session_id;
+                await this.fetchRemoteAvailableShells();
                 this.isRemoteLocalMode = true;
 
                 // 2. 连接远程终端
@@ -870,7 +898,7 @@ createApp({
 
         connectRemoteTerminal() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${window.location.host}/ws/remote/terminal?session_id=${encodeURIComponent(this.sessionId)}`;
+            const wsUrl = `${protocol}//${window.location.host}/ws/remote/terminal?session_id=${encodeURIComponent(this.sessionId)}&shell=${encodeURIComponent(this.remoteShell)}`;
 
             this.ws = new WebSocket(wsUrl);
             this.ws.binaryType = 'arraybuffer';
@@ -1669,18 +1697,34 @@ createApp({
 
         // ==================== 系统仪表盘 ====================
 
+        managementSupported() {
+            return WebSSHManagement.managementSupported(this);
+        },
+
+        managementEndpoint(path, params) {
+            return WebSSHManagement.managementEndpoint(this, path, params);
+        },
+
         async fetchSystemInfo() {
+            if (!this.managementSupported()) {
+                this.systemInfo = null;
+                return;
+            }
             try {
-                var resp = await fetch('/api/system/info');
+                var resp = await fetch(this.managementEndpoint('system/info'));
+                if (!resp.ok) throw new Error(resp.statusText);
                 var data = await resp.json();
                 this.systemInfo = data;
             } catch (e) {
                 console.error('Failed to fetch system info:', e);
+                this.systemInfo = null;
             }
         },
 
         openDashboard() {
-            this.showDashboard = true;
+            if (this.managementSupported()) {
+                this.showDashboard = true;
+            }
         },
 
         formatUptime(seconds) {
@@ -1702,8 +1746,13 @@ createApp({
         // ==================== Docker 管理 ====================
 
         async checkDockerAvailable() {
+            if (!this.managementSupported()) {
+                this.dockerAvailable = false;
+                return;
+            }
             try {
-                var resp = await fetch('/api/docker/available');
+                var resp = await fetch(this.managementEndpoint('docker/available'));
+                if (!resp.ok) throw new Error(resp.statusText);
                 var data = await resp.json();
                 this.dockerAvailable = data.available === true;
             } catch (e) {
@@ -1712,37 +1761,50 @@ createApp({
         },
 
         async fetchDockerContainers() {
+            if (!this.managementSupported()) {
+                this.dockerContainers = [];
+                return;
+            }
             this.dockerLoading = true;
             try {
-                var resp = await fetch('/api/docker/containers');
+                var resp = await fetch(this.managementEndpoint('docker/containers'));
+                if (!resp.ok) throw new Error(resp.statusText);
                 var data = await resp.json();
                 this.dockerContainers = data.containers || [];
             } catch (e) {
                 console.error('Failed to fetch containers:', e);
+                this.dockerContainers = [];
             }
             this.dockerLoading = false;
         },
 
         async fetchDockerImages() {
+            if (!this.managementSupported()) {
+                this.dockerImages = [];
+                return;
+            }
             this.dockerLoading = true;
             try {
-                var resp = await fetch('/api/docker/images');
+                var resp = await fetch(this.managementEndpoint('docker/images'));
+                if (!resp.ok) throw new Error(resp.statusText);
                 var data = await resp.json();
                 this.dockerImages = data.images || [];
             } catch (e) {
                 console.error('Failed to fetch images:', e);
+                this.dockerImages = [];
             }
             this.dockerLoading = false;
         },
 
         async dockerAction(containerId, action) {
+            if (!this.managementSupported()) return;
             var payload = { id: containerId };
             if (action === 'remove') {
                 if (!confirm('确认删除此容器？')) return;
                 payload.force = true;
             }
             try {
-                var resp = await fetch('/api/docker/container/' + action, {
+                var resp = await fetch(this.managementEndpoint('docker/container/' + action), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
@@ -1759,6 +1821,7 @@ createApp({
         },
 
         async viewContainerLogs(containerId) {
+            if (!this.managementSupported()) return;
             this.dockerSelectedContainer = containerId;
             this.dockerLogsLoading = true;
             this.dockerContainerLogs = '加载中...';
@@ -1785,7 +1848,7 @@ createApp({
             }
 
             try {
-                var resp = await fetch('/api/docker/container/logs?id=' + encodeURIComponent(containerId) + '&tail=' + tail);
+                var resp = await fetch(this.managementEndpoint('docker/container/logs', { id: containerId, tail: tail }));
                 var data = await resp.json();
                 this.dockerContainerLogs = data.logs || '(无日志)';
             } catch (e) {
@@ -1795,9 +1858,10 @@ createApp({
         },
 
         async clearContainerLogs(containerId) {
+            if (!this.managementSupported()) return;
             if (!confirm('确认清空此容器的日志？清空后无法恢复。')) return;
             try {
-                var resp = await fetch('/api/docker/container/clear-logs', {
+                var resp = await fetch(this.managementEndpoint('docker/container/clear-logs'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ id: containerId })
@@ -1849,36 +1913,36 @@ createApp({
             return 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-400';
         },
 
-        // 根据文件扩展名返回图标
+        // 根据文件扩展名返回文字类型，避免依赖客户端 Emoji 字体
         getFileIcon(filename) {
             const ext = filename.split('.').pop().toLowerCase();
             const iconMap = {
                 // 图片
-                'jpg': '🖼️', 'jpeg': '🖼️', 'png': '🖼️', 'gif': '🖼️', 'bmp': '🖼️', 'svg': '🖼️', 'webp': '🖼️',
+                'jpg': '图片', 'jpeg': '图片', 'png': '图片', 'gif': '图片', 'bmp': '图片', 'svg': '图片', 'webp': '图片',
                 // 文档
-                'pdf': '📕', 'doc': '📘', 'docx': '📘', 'txt': '📄', 'md': '📝',
+                'pdf': '文档', 'doc': '文档', 'docx': '文档', 'txt': '文本', 'md': '文本',
                 // 表格
-                'xls': '📊', 'xlsx': '📊', 'csv': '📊',
+                'xls': '表格', 'xlsx': '表格', 'csv': '表格',
                 // 压缩
-                'zip': '📦', 'tar': '📦', 'gz': '📦', 'rar': '📦', '7z': '📦',
+                'zip': '压缩包', 'tar': '压缩包', 'gz': '压缩包', 'rar': '压缩包', '7z': '压缩包',
                 // 代码
-                'js': '📜', 'ts': '📜', 'py': '📜', 'go': '📜', 'java': '📜', 'c': '📜', 'cpp': '📜', 'h': '📜', 'hpp': '📜',
-                'sh': '📜', 'bash': '📜', 'zsh': '📜', 'fish': '📜',
-                'html': '🌐', 'htm': '🌐', 'css': '🎨', 'scss': '🎨', 'less': '🎨',
-                'json': '⚙️', 'xml': '⚙️', 'yaml': '⚙️', 'yml': '⚙️', 'toml': '⚙️',
+                'js': '代码', 'ts': '代码', 'py': '代码', 'go': '代码', 'java': '代码', 'c': '代码', 'cpp': '代码', 'h': '代码', 'hpp': '代码',
+                'sh': '脚本', 'bash': '脚本', 'zsh': '脚本', 'fish': '脚本',
+                'html': '网页', 'htm': '网页', 'css': '样式', 'scss': '样式', 'less': '样式',
+                'json': '配置', 'xml': '配置', 'yaml': '配置', 'yml': '配置', 'toml': '配置',
                 // 媒体
-                'mp3': '🎵', 'wav': '🎵', 'flac': '🎵', 'ogg': '🎵',
-                'mp4': '🎬', 'avi': '🎬', 'mkv': '🎬', 'mov': '🎬', 'wmv': '🎬',
+                'mp3': '音频', 'wav': '音频', 'flac': '音频', 'ogg': '音频',
+                'mp4': '视频', 'avi': '视频', 'mkv': '视频', 'mov': '视频', 'wmv': '视频',
                 // 可执行
-                'exe': '⚡', 'bin': '⚡', 'run': '⚡', 'app': '⚡',
+                'exe': '程序', 'bin': '程序', 'run': '程序', 'app': '程序',
                 // 配置
-                'conf': '⚙️', 'config': '⚙️', 'ini': '⚙️', 'env': '🔐',
+                'conf': '配置', 'config': '配置', 'ini': '配置', 'env': '配置',
                 // 日志
-                'log': '📋',
+                'log': '日志',
                 // 默认
-                '': '📄'
+                '': '文件'
             };
-            return iconMap[ext] || '📄';
+            return iconMap[ext] || '文件';
         },
 
         formatFileSize(size) {

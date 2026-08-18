@@ -4,13 +4,16 @@
   "description": "一个基于 Go 语言的网页版 SSH 堡垒机应用，支持 Web 终端和 SFTP 文件管理。",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build:css": "tailwindcss -i ./static/src.css -o ./static/css/tailwind.css --minify",
+    "test": "node --test static/js/app.test.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "devDependencies": {
-    "tailwindcss": "^3.4.1"
+    "acorn": "^8.15.0",
+    "tailwindcss": "^3.4.1",
+    "vue": "3.2.47"
   }
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"mime/multipart"
@@ -61,6 +62,125 @@ type RemoteLoginResponse struct {
 	SessionID  string `json:"session_id,omitempty"`
 	Error      string `json:"error,omitempty"`
 	RemoteUser string `json:"remote_user,omitempty"`
+}
+
+func remoteSessionRequest(r *http.Request, method, targetPath string, allowedQueryKeys ...string) (*http.Response, error) {
+	sessionID := r.URL.Query().Get("session_id")
+	if sessionID == "" {
+		return nil, fmt.Errorf("session_id required")
+	}
+
+	manager := GetRemoteSessionManager()
+	manager.mu.RLock()
+	remoteSession, ok := manager.sessions[sessionID]
+	manager.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("session not found")
+	}
+
+	targetURL, err := url.Parse(strings.TrimRight(remoteSession.URL, "/") + targetPath)
+	if err != nil {
+		return nil, fmt.Errorf("invalid remote URL: %w", err)
+	}
+	query := url.Values{}
+	for _, key := range allowedQueryKeys {
+		if value := r.URL.Query().Get(key); value != "" {
+			query.Set(key, value)
+		}
+	}
+	targetURL.RawQuery = query.Encode()
+
+	request, err := http.NewRequest(method, targetURL.String(), r.Body)
+	if err != nil {
+		return nil, err
+	}
+	if contentType := r.Header.Get("Content-Type"); contentType != "" {
+		request.Header.Set("Content-Type", contentType)
+	}
+	request.AddCookie(&http.Cookie{Name: "session_id", Value: remoteSession.Cookie})
+
+	response, err := (&http.Client{}).Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("请求远程服务器失败: %w", err)
+	}
+	return response, nil
+}
+
+func proxyRemoteResponse(w http.ResponseWriter, r *http.Request, method, targetPath string, allowedQueryKeys ...string) {
+	response, err := remoteSessionRequest(r, method, targetPath, allowedQueryKeys...)
+	if err != nil {
+		if err.Error() == "session_id required" {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err.Error() == "session not found" {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer response.Body.Close()
+
+	if contentType := response.Header.Get("Content-Type"); contentType != "" {
+		w.Header().Set("Content-Type", contentType)
+	}
+	w.WriteHeader(response.StatusCode)
+	if _, err := io.Copy(w, response.Body); err != nil {
+		log.Printf("failed to proxy remote response for %s: %v", targetPath, err)
+	}
+}
+
+func HandleRemoteShells(w http.ResponseWriter, r *http.Request) {
+	proxyRemoteResponse(w, r, http.MethodGet, "/api/local/shells")
+}
+
+func HandleRemoteSystemInfo(w http.ResponseWriter, r *http.Request) {
+	proxyRemoteResponse(w, r, http.MethodGet, "/api/system/info")
+}
+
+func HandleRemoteDockerAvailable(w http.ResponseWriter, r *http.Request) {
+	proxyRemoteResponse(w, r, http.MethodGet, "/api/docker/available")
+}
+
+func HandleRemoteDockerListContainers(w http.ResponseWriter, r *http.Request) {
+	proxyRemoteResponse(w, r, http.MethodGet, "/api/docker/containers")
+}
+
+func HandleRemoteDockerListImages(w http.ResponseWriter, r *http.Request) {
+	proxyRemoteResponse(w, r, http.MethodGet, "/api/docker/images")
+}
+
+func HandleRemoteDockerStartContainer(w http.ResponseWriter, r *http.Request) {
+	proxyRemoteResponse(w, r, http.MethodPost, "/api/docker/container/start")
+}
+
+func HandleRemoteDockerStopContainer(w http.ResponseWriter, r *http.Request) {
+	proxyRemoteResponse(w, r, http.MethodPost, "/api/docker/container/stop")
+}
+
+func HandleRemoteDockerRestartContainer(w http.ResponseWriter, r *http.Request) {
+	proxyRemoteResponse(w, r, http.MethodPost, "/api/docker/container/restart")
+}
+
+func HandleRemoteDockerRemoveContainer(w http.ResponseWriter, r *http.Request) {
+	proxyRemoteResponse(w, r, http.MethodPost, "/api/docker/container/remove")
+}
+
+func HandleRemoteDockerContainerLogs(w http.ResponseWriter, r *http.Request) {
+	proxyRemoteResponse(w, r, http.MethodGet, "/api/docker/container/logs", "id", "tail")
+}
+
+func HandleRemoteDockerContainerLogSize(w http.ResponseWriter, r *http.Request) {
+	proxyRemoteResponse(w, r, http.MethodGet, "/api/docker/container/log-size", "id")
+}
+
+func HandleRemoteDockerClearLogs(w http.ResponseWriter, r *http.Request) {
+	proxyRemoteResponse(w, r, http.MethodPost, "/api/docker/container/clear-logs")
+}
+
+func HandleRemoteDockerContainerStats(w http.ResponseWriter, r *http.Request) {
+	proxyRemoteResponse(w, r, http.MethodGet, "/api/docker/container/stats", "id")
 }
 
 // HandleRemoteLogin 处理远程 web-ssh 登录
@@ -269,7 +389,18 @@ func HandleRemoteTerminal(w http.ResponseWriter, r *http.Request) {
 	// 连接到远程 WebSocket
 	remoteWsURL := strings.Replace(remoteSession.URL, "http://", "ws://", 1)
 	remoteWsURL = strings.Replace(remoteWsURL, "https://", "wss://", 1)
-	remoteWsURL += "/ws/terminal?mode=local"
+	remoteWS, err := url.Parse(strings.TrimRight(remoteWsURL, "/") + "/ws/terminal")
+	if err != nil {
+		localConn.WriteMessage(websocket.TextMessage, []byte(`{"type":"error","message":"远程服务器地址无效"}`))
+		return
+	}
+	query := url.Values{}
+	query.Set("mode", "local")
+	if shell := r.URL.Query().Get("shell"); shell != "" {
+		query.Set("shell", shell)
+	}
+	remoteWS.RawQuery = query.Encode()
+	remoteWsURL = remoteWS.String()
 
 	log.Printf("Connecting to remote WebSocket: %s", remoteWsURL)
 

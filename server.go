@@ -230,6 +230,45 @@ func SetupServer(port int) *gin.Engine {
 		protectedApi.POST("/remote/file/remove", func(c *gin.Context) {
 			handlers.HandleRemoteFileRemove(c.Writer, c.Request)
 		})
+		protectedApi.GET("/remote/shells", func(c *gin.Context) {
+			handlers.HandleRemoteShells(c.Writer, c.Request)
+		})
+		protectedApi.GET("/remote/system/info", func(c *gin.Context) {
+			handlers.HandleRemoteSystemInfo(c.Writer, c.Request)
+		})
+		protectedApi.GET("/remote/docker/available", func(c *gin.Context) {
+			handlers.HandleRemoteDockerAvailable(c.Writer, c.Request)
+		})
+		protectedApi.GET("/remote/docker/containers", func(c *gin.Context) {
+			handlers.HandleRemoteDockerListContainers(c.Writer, c.Request)
+		})
+		protectedApi.GET("/remote/docker/images", func(c *gin.Context) {
+			handlers.HandleRemoteDockerListImages(c.Writer, c.Request)
+		})
+		protectedApi.POST("/remote/docker/container/start", func(c *gin.Context) {
+			handlers.HandleRemoteDockerStartContainer(c.Writer, c.Request)
+		})
+		protectedApi.POST("/remote/docker/container/stop", func(c *gin.Context) {
+			handlers.HandleRemoteDockerStopContainer(c.Writer, c.Request)
+		})
+		protectedApi.POST("/remote/docker/container/restart", func(c *gin.Context) {
+			handlers.HandleRemoteDockerRestartContainer(c.Writer, c.Request)
+		})
+		protectedApi.POST("/remote/docker/container/remove", func(c *gin.Context) {
+			handlers.HandleRemoteDockerRemoveContainer(c.Writer, c.Request)
+		})
+		protectedApi.GET("/remote/docker/container/logs", func(c *gin.Context) {
+			handlers.HandleRemoteDockerContainerLogs(c.Writer, c.Request)
+		})
+		protectedApi.GET("/remote/docker/container/log-size", func(c *gin.Context) {
+			handlers.HandleRemoteDockerContainerLogSize(c.Writer, c.Request)
+		})
+		protectedApi.POST("/remote/docker/container/clear-logs", func(c *gin.Context) {
+			handlers.HandleRemoteDockerClearLogs(c.Writer, c.Request)
+		})
+		protectedApi.GET("/remote/docker/container/stats", func(c *gin.Context) {
+			handlers.HandleRemoteDockerContainerStats(c.Writer, c.Request)
+		})
 		protectedApi.POST("/admin/users/add", func(c *gin.Context) {
 			handlers.HandleAddUser(c.Writer, c.Request)
 		})

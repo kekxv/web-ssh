@@ -5,10 +5,12 @@ package handlers
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -25,10 +27,10 @@ func (p *unixPTY) Resize(rows, cols uint16) error {
 }
 
 func startLocalShell(shell string) (PTY, error) {
-	if shell == "" {
-		shell = "/bin/zsh"
+	cmd, err := localShellCommand(shell)
+	if err != nil {
+		return nil, err
 	}
-	cmd := exec.Command(shell, "--login")
 
 	// 获取当前用户信息，设置正确的 HOME 和工作目录
 	currentUser, err := user.Current()
@@ -52,6 +54,29 @@ func startLocalShell(shell string) (PTY, error) {
 	return &unixPTY{ptmx}, nil
 }
 
+func localShellCommand(shell string) (*exec.Cmd, error) {
+	if shell == "" {
+		for _, candidate := range defaultUnixShells() {
+			if _, err := exec.LookPath(candidate); err == nil {
+				shell = candidate
+				break
+			}
+		}
+	}
+	if shell == "" {
+		return nil, fmt.Errorf("no supported shell is available")
+	}
+
+	path, err := exec.LookPath(shell)
+	if err != nil {
+		return nil, fmt.Errorf("shell %q is not available: %w", shell, err)
+	}
+	if base := filepath.Base(path); base == "bash" || base == "zsh" {
+		return exec.Command(path, "--login"), nil
+	}
+	return exec.Command(path), nil
+}
+
 func GetAvailableShells(w http.ResponseWriter, r *http.Request) {
 	currentShell := os.Getenv("SHELL")
 	if currentShell == "" {
@@ -60,7 +85,7 @@ func GetAvailableShells(w http.ResponseWriter, r *http.Request) {
 
 	file, err := os.Open("/etc/shells")
 	if err != nil {
-		shells := defaultUnixShells()
+		shells := installedUnixShells(defaultUnixShells())
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"shells":        shells,
@@ -79,8 +104,9 @@ func GetAvailableShells(w http.ResponseWriter, r *http.Request) {
 		}
 		shells = append(shells, line)
 	}
+	shells = installedUnixShells(shells)
 	if len(shells) == 0 {
-		shells = defaultUnixShells()
+		shells = installedUnixShells(defaultUnixShells())
 	}
 	sortUnixShells(shells)
 
@@ -89,6 +115,22 @@ func GetAvailableShells(w http.ResponseWriter, r *http.Request) {
 		"shells":        shells,
 		"current_shell": preferredUnixShell(shells, currentShell),
 	})
+}
+
+func installedUnixShells(shells []string) []string {
+	installed := make([]string, 0, len(shells))
+	seen := make(map[string]bool)
+	for _, shell := range shells {
+		if shell == "" || seen[shell] {
+			continue
+		}
+		if _, err := exec.LookPath(shell); err != nil {
+			continue
+		}
+		seen[shell] = true
+		installed = append(installed, shell)
+	}
+	return installed
 }
 
 func defaultUnixShells() []string {
