@@ -63,6 +63,8 @@ func SetupServer(port int) *gin.Engine {
 			contentType = "application/javascript"
 		} else if strings.HasSuffix(file, ".css") {
 			contentType = "text/css"
+		} else if strings.HasSuffix(file, ".svg") {
+			contentType = "image/svg+xml"
 		}
 		c.Data(http.StatusOK, contentType, content)
 	})
@@ -81,6 +83,8 @@ func SetupServer(port int) *gin.Engine {
 					contentType = "application/javascript"
 				} else if strings.HasSuffix(path, ".css") {
 					contentType = "text/css"
+				} else if strings.HasSuffix(path, ".svg") {
+					contentType = "image/svg+xml"
 				}
 				c.Data(http.StatusOK, contentType, data)
 				return

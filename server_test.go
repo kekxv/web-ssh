@@ -100,6 +100,28 @@ func TestHealthCheck(t *testing.T) {
 	t.Logf("✓ 远程服务器正常 (%s)", remoteServerURL)
 }
 
+func TestLocalIconSprite(t *testing.T) {
+    resp, err := localClient.Get(localServerURL + "/vendor/icons.svg")
+    if err != nil {
+        t.Fatalf("无法加载本地图标资源: %v", err)
+    }
+    defer resp.Body.Close()
+
+    if resp.StatusCode != http.StatusOK {
+        t.Fatalf("图标资源状态码 = %d, want %d", resp.StatusCode, http.StatusOK)
+    }
+    if !strings.HasPrefix(resp.Header.Get("Content-Type"), "image/svg+xml") {
+        t.Fatalf("图标资源 Content-Type = %q, want image/svg+xml", resp.Header.Get("Content-Type"))
+    }
+    body, err := io.ReadAll(resp.Body)
+    if err != nil {
+        t.Fatalf("读取图标资源失败: %v", err)
+    }
+    if !bytes.Contains(body, []byte(`id="file-folder"`)) {
+        t.Fatal("图标资源缺少文件夹图标")
+    }
+}
+
 // TestLocalLogin 测试本地登录
 func TestLocalLogin(t *testing.T) {
 	loginURL := localServerURL + "/api/auth/login"

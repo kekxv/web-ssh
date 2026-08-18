@@ -1913,36 +1913,40 @@ createApp({
             return 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-400';
         },
 
-        // 根据文件扩展名返回文字类型，避免依赖客户端 Emoji 字体
+        // 根据文件扩展名返回本地图标名称，不依赖客户端 Emoji 字体
         getFileIcon(filename) {
             const ext = filename.split('.').pop().toLowerCase();
             const iconMap = {
                 // 图片
-                'jpg': '图片', 'jpeg': '图片', 'png': '图片', 'gif': '图片', 'bmp': '图片', 'svg': '图片', 'webp': '图片',
+                'jpg': 'image', 'jpeg': 'image', 'png': 'image', 'gif': 'image', 'bmp': 'image', 'svg': 'image', 'webp': 'image',
                 // 文档
-                'pdf': '文档', 'doc': '文档', 'docx': '文档', 'txt': '文本', 'md': '文本',
+                'pdf': 'document', 'doc': 'document', 'docx': 'document', 'txt': 'text', 'md': 'text',
                 // 表格
-                'xls': '表格', 'xlsx': '表格', 'csv': '表格',
+                'xls': 'sheet', 'xlsx': 'sheet', 'csv': 'sheet',
                 // 压缩
-                'zip': '压缩包', 'tar': '压缩包', 'gz': '压缩包', 'rar': '压缩包', '7z': '压缩包',
+                'zip': 'archive', 'tar': 'archive', 'gz': 'archive', 'rar': 'archive', '7z': 'archive',
                 // 代码
-                'js': '代码', 'ts': '代码', 'py': '代码', 'go': '代码', 'java': '代码', 'c': '代码', 'cpp': '代码', 'h': '代码', 'hpp': '代码',
-                'sh': '脚本', 'bash': '脚本', 'zsh': '脚本', 'fish': '脚本',
-                'html': '网页', 'htm': '网页', 'css': '样式', 'scss': '样式', 'less': '样式',
-                'json': '配置', 'xml': '配置', 'yaml': '配置', 'yml': '配置', 'toml': '配置',
+                'js': 'code', 'ts': 'code', 'py': 'code', 'go': 'code', 'java': 'code', 'c': 'code', 'cpp': 'code', 'h': 'code', 'hpp': 'code',
+                'sh': 'terminal', 'bash': 'terminal', 'zsh': 'terminal', 'fish': 'terminal',
+                'html': 'web', 'htm': 'web', 'css': 'code', 'scss': 'code', 'less': 'code',
+                'json': 'settings', 'xml': 'settings', 'yaml': 'settings', 'yml': 'settings', 'toml': 'settings',
                 // 媒体
-                'mp3': '音频', 'wav': '音频', 'flac': '音频', 'ogg': '音频',
-                'mp4': '视频', 'avi': '视频', 'mkv': '视频', 'mov': '视频', 'wmv': '视频',
+                'mp3': 'audio', 'wav': 'audio', 'flac': 'audio', 'ogg': 'audio',
+                'mp4': 'video', 'avi': 'video', 'mkv': 'video', 'mov': 'video', 'wmv': 'video',
                 // 可执行
-                'exe': '程序', 'bin': '程序', 'run': '程序', 'app': '程序',
+                'exe': 'application', 'bin': 'application', 'run': 'application', 'app': 'application',
                 // 配置
-                'conf': '配置', 'config': '配置', 'ini': '配置', 'env': '配置',
+                'conf': 'settings', 'config': 'settings', 'ini': 'settings', 'env': 'settings',
                 // 日志
-                'log': '日志',
+                'log': 'log',
                 // 默认
-                '': '文件'
+                '': 'file'
             };
-            return iconMap[ext] || '文件';
+            return iconMap[ext] || 'file';
+        },
+
+        fileIconHref(filename) {
+            return '/vendor/icons.svg#file-' + this.getFileIcon(filename);
         },
 
         formatFileSize(size) {
