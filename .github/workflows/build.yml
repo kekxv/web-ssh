@@ -9,9 +9,30 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
+  prepare-release:
+    name: Prepare Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+      should_release: ${{ steps.release.outputs.should_release }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create missing version tag
+        id: release
+        run: sh scripts/prepare-release.sh
+
   build:
     name: Build
+    needs: prepare-release
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -62,11 +83,9 @@ jobs:
 
   release:
     name: Create Release
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [prepare-release, build]
+    if: needs.prepare-release.outputs.should_release == 'true'
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -77,6 +96,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.prepare-release.outputs.tag }}
           files: |
             artifacts/web-ssh-installer.sh
             artifacts/web-ssh-linux-amd64
