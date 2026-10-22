@@ -142,3 +142,19 @@ test('file types resolve to compact local SVG icon names', () => {
     assert.equal(appOptions.methods.getFileIcon('data.json'), 'settings');
     assert.equal(appOptions.methods.getFileIcon('docker_images'), 'file');
 });
+
+test('ttyd sessions do not support management panels', () => {
+    assert.equal(management.managementSupported({
+        isLocalMode: false,
+        isRemoteLocalMode: false,
+        isTtydMode: true
+    }), false);
+});
+
+test('page exposes a shell-only ttyd connection mode', () => {
+    const page = fs.readFileSync(path.resolve(__dirname, '..', 'index.html'), 'utf8');
+
+    assert.notEqual(page.indexOf('value="ttyd"'), -1);
+    assert.notEqual(page.indexOf('ttyd 服务器地址'), -1);
+    assert.notEqual(page.indexOf('!isTtydMode'), -1);
+});

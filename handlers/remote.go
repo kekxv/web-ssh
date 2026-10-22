@@ -17,11 +17,20 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// RemoteSession 管理远程 web-ssh 会话
+const (
+	RemoteKindWebSSH = "webssh"
+	RemoteKindTtyd   = "ttyd"
+)
+
+// RemoteSession 管理远程 web-ssh / ttyd 会话
 type RemoteSession struct {
 	ID         string
+	Kind       string // "webssh" 或 "ttyd"
 	URL        string
-	Cookie     string // 远程服务器的 session cookie
+	BasePath   string // ttyd --base-path，例如 /terminal
+	Cookie     string // web-ssh 的 session cookie
+	AuthHeader string // ttyd 的 Authorization 头（目前支持 Basic）
+	Token      string // ttyd /token 返回的 AuthToken
 	Username   string
 	RemoteConn *websocket.Conn // 远程 WebSocket 连接
 	LastActive time.Time
@@ -54,11 +63,13 @@ type RemoteLoginRequest struct {
 	URL      string `json:"url"`
 	Username string `json:"username"`
 	Password string `json:"password"`
+	Kind     string `json:"kind,omitempty"` // webssh / ttyd / auto
 }
 
 // RemoteLoginResponse 远程登录响应
 type RemoteLoginResponse struct {
 	Success    bool   `json:"success"`
+	Kind       string `json:"kind,omitempty"`
 	SessionID  string `json:"session_id,omitempty"`
 	Error      string `json:"error,omitempty"`
 	RemoteUser string `json:"remote_user,omitempty"`
@@ -132,6 +143,21 @@ func proxyRemoteResponse(w http.ResponseWriter, r *http.Request, method, targetP
 }
 
 func HandleRemoteShells(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.URL.Query().Get("session_id")
+	manager := GetRemoteSessionManager()
+	manager.mu.RLock()
+	remoteSession, ok := manager.sessions[sessionID]
+	manager.mu.RUnlock()
+	if ok && remoteSession.Kind == RemoteKindTtyd {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"shells":        []string{},
+			"current_shell": "",
+			"kind":          RemoteKindTtyd,
+			"fixed":         true,
+		})
+		return
+	}
 	proxyRemoteResponse(w, r, http.MethodGet, "/api/local/shells")
 }
 
@@ -183,7 +209,79 @@ func HandleRemoteDockerContainerStats(w http.ResponseWriter, r *http.Request) {
 	proxyRemoteResponse(w, r, http.MethodGet, "/api/docker/container/stats", "id")
 }
 
-// HandleRemoteLogin 处理远程 web-ssh 登录
+func normalizeRemoteURL(raw string) string {
+	remoteURL := strings.TrimSpace(raw)
+	if !strings.HasPrefix(remoteURL, "http://") && !strings.HasPrefix(remoteURL, "https://") {
+		remoteURL = "http://" + remoteURL
+	}
+	return strings.TrimRight(remoteURL, "/")
+}
+
+func detectRemoteKind(remoteURL string) string {
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(remoteURL + "/api/public-key")
+	if err == nil {
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			var payload map[string]json.RawMessage
+			if json.NewDecoder(resp.Body).Decode(&payload) == nil {
+				if _, ok := payload["public_key"]; ok {
+					return RemoteKindWebSSH
+				}
+			}
+		}
+	}
+	return RemoteKindTtyd
+}
+
+func loginTtyd(remoteURL, username, password string) (basePath, token, authHeader string, err error) {
+	parsed, err := url.Parse(remoteURL)
+	if err != nil {
+		return "", "", "", fmt.Errorf("远程地址无效: %w", err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", "", "", fmt.Errorf("不支持的远程协议: %s", parsed.Scheme)
+	}
+
+	basePath = strings.TrimRight(parsed.Path, "/")
+	if basePath == "/" {
+		basePath = ""
+	}
+
+	tokenURL := parsed.Scheme + "://" + parsed.Host + basePath + "/token"
+	req, err := http.NewRequest(http.MethodGet, tokenURL, nil)
+	if err != nil {
+		return "", "", "", err
+	}
+	if username != "" || password != "" {
+		req.SetBasicAuth(username, password)
+		authHeader = "Basic " + base64.StdEncoding.EncodeToString([]byte(username+":"+password))
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", "", "", fmt.Errorf("无法连接到 ttyd 服务器: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusProxyAuthRequired {
+		return "", "", "", fmt.Errorf("ttyd 认证失败，请检查用户名和密码（当前支持 -c/--credential 模式）")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", "", "", fmt.Errorf("ttyd /token 返回状态 %d，请确认地址是 ttyd 服务", resp.StatusCode)
+	}
+
+	var payload struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return "", "", "", fmt.Errorf("解析 ttyd /token 响应失败: %w", err)
+	}
+	return basePath, payload.Token, authHeader, nil
+}
+
+// HandleRemoteLogin 处理远程 web-ssh / ttyd 登录
 func HandleRemoteLogin(w http.ResponseWriter, r *http.Request) {
 	var req RemoteLoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -191,20 +289,72 @@ func HandleRemoteLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 验证输入
-	if req.URL == "" || req.Username == "" || req.Password == "" {
+	if strings.TrimSpace(req.URL) == "" {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(RemoteLoginResponse{
+			Success: false,
+			Error:   "请填写远程服务器地址",
+		})
+		return
+	}
+
+	remoteURL := normalizeRemoteURL(req.URL)
+	kind := strings.ToLower(strings.TrimSpace(req.Kind))
+	if kind == "" || kind == "auto" {
+		kind = detectRemoteKind(remoteURL)
+	}
+	if kind != RemoteKindTtyd {
+		kind = RemoteKindWebSSH
+	}
+
+	if kind == RemoteKindTtyd {
+		basePath, token, authHeader, err := loginTtyd(remoteURL, req.Username, req.Password)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(RemoteLoginResponse{
+				Success: false,
+				Error:   err.Error(),
+			})
+			return
+		}
+
+		sessionID := generateSessionID()
+		remoteSession := &RemoteSession{
+			ID:         sessionID,
+			Kind:       RemoteKindTtyd,
+			URL:        remoteURL,
+			BasePath:   basePath,
+			Token:      token,
+			AuthHeader: authHeader,
+			Username:   req.Username,
+			LastActive: time.Now(),
+		}
+
+		sm := GetRemoteSessionManager()
+		sm.mu.Lock()
+		sm.sessions[sessionID] = remoteSession
+		sm.mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(RemoteLoginResponse{
+			Success:    true,
+			Kind:       RemoteKindTtyd,
+			SessionID:  sessionID,
+			RemoteUser: req.Username,
+		})
+
+		log.Printf("Remote ttyd login successful: %s -> %s (session: %s)", req.Username, remoteURL, sessionID)
+		return
+	}
+
+	// web-ssh 远程本地登录仍需要用户名和密码
+	if req.Username == "" || req.Password == "" {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(RemoteLoginResponse{
 			Success: false,
 			Error:   "请填写完整的登录信息",
 		})
 		return
-	}
-
-	// 确保 URL 格式正确
-	remoteURL := req.URL
-	if !strings.HasPrefix(remoteURL, "http://") && !strings.HasPrefix(remoteURL, "https://") {
-		remoteURL = "http://" + remoteURL
 	}
 
 	// 获取远程服务器的公钥
@@ -310,6 +460,7 @@ func HandleRemoteLogin(w http.ResponseWriter, r *http.Request) {
 	sessionID := generateSessionID()
 	remoteSession := &RemoteSession{
 		ID:         sessionID,
+		Kind:       RemoteKindWebSSH,
 		URL:        remoteURL,
 		Cookie:     sessionCookie,
 		Username:   req.Username,
@@ -324,6 +475,7 @@ func HandleRemoteLogin(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(RemoteLoginResponse{
 		Success:    true,
+		Kind:       RemoteKindWebSSH,
 		SessionID:  sessionID,
 		RemoteUser: req.Username,
 	})
@@ -385,6 +537,11 @@ func HandleRemoteTerminal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer localConn.Close()
+
+	if remoteSession.Kind == RemoteKindTtyd {
+		handleTtydTerminal(localConn, remoteSession)
+		return
+	}
 
 	// 连接到远程 WebSocket
 	remoteWsURL := strings.Replace(remoteSession.URL, "http://", "ws://", 1)
@@ -450,6 +607,163 @@ func HandleRemoteTerminal(w http.ResponseWriter, r *http.Request) {
 			localConn.WriteMessage(websocket.BinaryMessage, message)
 		}
 	}
+}
+
+func ttydWebSocketTarget(remoteURL, basePath string) (string, string, error) {
+	parsed, err := url.Parse(remoteURL)
+	if err != nil {
+		return "", "", err
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", "", fmt.Errorf("不支持的远程协议: %s", parsed.Scheme)
+	}
+
+	wsScheme := "ws"
+	originScheme := "http"
+	if parsed.Scheme == "https" {
+		wsScheme = "wss"
+		originScheme = "https"
+	}
+
+	if basePath == "" {
+		basePath = strings.TrimRight(parsed.Path, "/")
+		if basePath == "/" {
+			basePath = ""
+		}
+	}
+
+	wsURL := wsScheme + "://" + parsed.Host + basePath + "/ws"
+	origin := originScheme + "://" + parsed.Host
+	return wsURL, origin, nil
+}
+
+func sendRemoteGatewayError(conn *websocket.Conn, message string) {
+	data, _ := json.Marshal(map[string]string{"type": "error", "message": message})
+	_ = conn.WriteMessage(websocket.TextMessage, data)
+}
+
+func handleTtydTerminal(localConn *websocket.Conn, remoteSession *RemoteSession) {
+	wsURL, origin, err := ttydWebSocketTarget(remoteSession.URL, remoteSession.BasePath)
+	if err != nil {
+		sendRemoteGatewayError(localConn, "ttyd 地址无效: "+err.Error())
+		return
+	}
+
+	dialer := websocket.Dialer{
+		Subprotocols:     []string{"tty"},
+		HandshakeTimeout: 15 * time.Second,
+	}
+	header := http.Header{}
+	if remoteSession.AuthHeader != "" {
+		header.Set("Authorization", remoteSession.AuthHeader)
+	}
+	// ttyd -O/--check-origin 会校验 Origin 与 Host 一致。
+	header.Set("Origin", origin)
+
+	log.Printf("Connecting to ttyd WebSocket: %s", wsURL)
+	remoteConn, resp, err := dialer.Dial(wsURL, header)
+	if err != nil {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		log.Printf("Failed to connect to ttyd WebSocket: %v", err)
+		sendRemoteGatewayError(localConn, "无法连接到 ttyd 服务器: "+err.Error())
+		return
+	}
+	defer remoteConn.Close()
+
+	remoteSession.mu.Lock()
+	remoteSession.RemoteConn = remoteConn
+	remoteSession.mu.Unlock()
+
+	// ttyd 必须收到首帧 JSON_DATA 才会创建 PTY 进程。
+	initial, _ := json.Marshal(map[string]interface{}{
+		"AuthToken": remoteSession.Token,
+		"columns":   80,
+		"rows":      24,
+	})
+	if err := remoteConn.WriteMessage(websocket.BinaryMessage, initial); err != nil {
+		sendRemoteGatewayError(localConn, "初始化 ttyd 会话失败: "+err.Error())
+		return
+	}
+
+	log.Printf("ttyd WebSocket connected successfully")
+	relayTtydTerminal(localConn, remoteConn)
+}
+
+func relayTtydTerminal(localConn, remoteConn *websocket.Conn) {
+	done := make(chan struct{}, 2)
+
+	// 本地浏览器 -> ttyd：JSON 控制帧转换为 ttyd 的 "1 字节命令 + 载荷" 帧
+	go func() {
+		defer func() { done <- struct{}{} }()
+		for {
+			_, message, err := localConn.ReadMessage()
+			if err != nil {
+				return
+			}
+
+			var msg struct {
+				Type string `json:"type"`
+				Data string `json:"data"`
+				Cols int    `json:"cols"`
+				Rows int    `json:"rows"`
+			}
+			if err := json.Unmarshal(message, &msg); err != nil {
+				continue
+			}
+
+			switch msg.Type {
+			case "input":
+				payload := make([]byte, 0, len(msg.Data)+1)
+				payload = append(payload, '0')
+				payload = append(payload, msg.Data...)
+				if err := remoteConn.WriteMessage(websocket.BinaryMessage, payload); err != nil {
+					return
+				}
+			case "resize":
+				body, _ := json.Marshal(map[string]int{
+					"columns": msg.Cols,
+					"rows":    msg.Rows,
+				})
+				payload := make([]byte, 0, len(body)+1)
+				payload = append(payload, '1')
+				payload = append(payload, body...)
+				if err := remoteConn.WriteMessage(websocket.BinaryMessage, payload); err != nil {
+					return
+				}
+			}
+		}
+	}()
+
+	// ttyd -> 本地浏览器：去掉命令字节，只把终端输出交给 xterm。
+	// '1'（窗口标题）和 '2'（客户端偏好）在这里忽略，ttyd 模式只支持终端。
+	go func() {
+		defer func() { done <- struct{}{} }()
+		for {
+			_, message, err := remoteConn.ReadMessage()
+			if err != nil {
+				return
+			}
+			if len(message) == 0 {
+				continue
+			}
+			switch message[0] {
+			case '0':
+				if len(message) > 1 {
+					if err := localConn.WriteMessage(websocket.BinaryMessage, message[1:]); err != nil {
+						return
+					}
+				}
+			case '1', '2':
+				// ttyd 的标题/偏好设置帧，终端模式下忽略。
+			default:
+				log.Printf("Ignoring unknown ttyd frame type: %q", message[0])
+			}
+		}
+	}()
+
+	<-done
 }
 
 // HandleRemoteFileList 处理远程文件列表

@@ -157,6 +157,14 @@
                                         <p class="text-xs text-slate-500 dark:text-slate-400">连接其他 web-ssh 服务器进行操作</p>
                                     </div>
                                 </label>
+                                <label class="flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors"
+                                       :class="connectionMode === 'ttyd' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700/30'">
+                                    <input type="radio" v-model="connectionMode" value="ttyd" class="w-4 h-4 text-blue-600">
+                                    <div>
+                                        <span class="font-medium text-slate-800 dark:text-white">ttyd 终端</span>
+                                        <p class="text-xs text-slate-500 dark:text-slate-400">连接 ttyd 服务器（仅终端，不支持文件管理）</p>
+                                    </div>
+                                </label>
                             </div>
                         </div>
 
@@ -298,24 +306,24 @@
                             </div>
                         </template>
 
-                        <!-- 远程本地登录模式 -->
-                        <template v-if="connectionMode === 'remoteLocal'">
+                        <!-- 远程本地登录 / ttyd 模式 -->
+                        <template v-if="connectionMode === 'remoteLocal' || connectionMode === 'ttyd'">
                             <div>
-                                <label class="block text-sm text-slate-500 dark:text-slate-400 mb-2">远程服务器地址</label>
-                                <input type="text" v-model="remoteConfig.url" placeholder="http://192.168.1.100:8080" required
+                                <label class="block text-sm text-slate-500 dark:text-slate-400 mb-2">{{ connectionMode === 'ttyd' ? 'ttyd 服务器地址' : '远程服务器地址' }}</label>
+                                <input type="text" v-model="remoteConfig.url" :placeholder="connectionMode === 'ttyd' ? 'http://192.168.1.100:7681' : 'http://192.168.1.100:8080'" required
                                        class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500">
                             </div>
                             <div>
-                                <label class="block text-sm text-slate-500 dark:text-slate-400 mb-2">用户名</label>
-                                <input type="text" v-model="remoteConfig.username" placeholder="请输入用户名" required
+                                <label class="block text-sm text-slate-500 dark:text-slate-400 mb-2">用户名<span v-if="connectionMode === 'ttyd'" class="text-slate-400">（可选）</span></label>
+                                <input type="text" v-model="remoteConfig.username" placeholder="请输入用户名" :required="connectionMode === 'remoteLocal'"
                                        class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500">
                             </div>
                             <div>
-                                <label class="block text-sm text-slate-500 dark:text-slate-400 mb-2">密码</label>
-                                <input type="password" v-model="remoteConfig.password" placeholder="请输入密码" required
+                                <label class="block text-sm text-slate-500 dark:text-slate-400 mb-2">密码<span v-if="connectionMode === 'ttyd'" class="text-slate-400">（可选）</span></label>
+                                <input type="password" v-model="remoteConfig.password" placeholder="请输入密码" :required="connectionMode === 'remoteLocal'"
                                        class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500">
                             </div>
-                            <div>
+                            <div v-if="connectionMode === 'remoteLocal'">
                                 <label class="block text-sm text-slate-500 dark:text-slate-400 mb-2">远端 Shell</label>
                                 <select v-model="remoteShell"
                                         class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500">
@@ -323,13 +331,21 @@
                                 </select>
                                 <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">登录后将自动校验远端实际可用的 Shell。</p>
                             </div>
-                            <div class="bg-purple-50 dark:bg-slate-900/50 rounded-lg p-4 border border-purple-100 dark:border-slate-700">
+                            <div v-if="connectionMode === 'remoteLocal'" class="bg-purple-50 dark:bg-slate-900/50 rounded-lg p-4 border border-purple-100 dark:border-slate-700">
                                 <div class="flex items-center gap-2 mb-3">
                                     <span class="text-purple-500 dark:text-purple-400"></span>
                                     <span class="text-sm text-slate-600 dark:text-slate-400 font-medium">远程本地登录模式</span>
                                 </div>
                                 <p class="text-xs text-slate-500">
                                      连接到另一台 web-ssh 服务器，通过该服务器操作其本机终端和文件。
+                                </p>
+                            </div>
+                            <div v-else class="bg-cyan-50 dark:bg-slate-900/50 rounded-lg p-4 border border-cyan-100 dark:border-slate-700">
+                                <div class="flex items-center gap-2 mb-3">
+                                    <span class="text-sm text-slate-600 dark:text-slate-400 font-medium">ttyd 终端模式</span>
+                                </div>
+                                <p class="text-xs text-slate-500">
+                                    仅连接终端：Shell 由 ttyd 启动命令决定；如需输入请以 -W 启动 ttyd；建议使用 wss:// 或 HTTPS 反向代理。
                                 </p>
                             </div>
                         </template>
@@ -354,6 +370,7 @@
                         <h3 class="text-sm font-semibold text-slate-800 dark:text-white flex items-center gap-2">
                             终端
                             <span v-if="connectionMode === 'ssh'" class="text-xs px-2 py-1 bg-blue-100 dark:bg-blue-600/20 text-blue-600 dark:text-blue-400 rounded font-medium">{{ config.username }}@{{ config.host }}</span>
+                            <span v-else-if="isTtydMode" class="text-xs px-2 py-1 bg-cyan-100 dark:bg-cyan-600/20 text-cyan-600 dark:text-cyan-400 rounded font-medium">ttyd: {{ remoteConfig.url }}</span>
                             <span v-else-if="isRemoteLocalMode" class="text-xs px-2 py-1 bg-purple-100 dark:bg-purple-600/20 text-purple-600 dark:text-purple-400 rounded font-medium">远程: {{ remoteConfig.url }}</span>
                             <span v-else class="text-xs px-2 py-1 bg-green-100 dark:bg-green-600/20 text-green-600 dark:text-green-400 rounded font-medium">Local</span>
                         </h3>
@@ -380,7 +397,7 @@
                                 class="px-3 py-1.5 bg-cyan-100 dark:bg-cyan-900/30 hover:bg-cyan-200 dark:hover:bg-cyan-900/50 text-cyan-600 dark:text-cyan-400 rounded-lg text-xs font-medium transition-colors flex items-center gap-1">
                             Docker
                         </button>
-                        <button @click="showFileManager = !showFileManager"
+                        <button v-if="!isTtydMode" @click="showFileManager = !showFileManager"
                                 class="px-3 py-1.5 bg-indigo-100 dark:bg-indigo-900/30 hover:bg-indigo-200 dark:hover:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400 rounded-lg text-xs font-medium transition-colors flex items-center gap-1">
                             文件管理
                         </button>
@@ -883,6 +900,6 @@
     <script src="/vendor/xterm.min.js"></script>
     <script src="/vendor/xterm-addon-fit.min.js"></script>
     <script src="/js/management.js"></script>
-    <script src="/js/app.js?v=1772858000-localfile"></script>
+    <script src="/js/app.js?v=1772858001-ttyd"></script>
 </body>
 </html>

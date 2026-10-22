@@ -6,6 +6,9 @@
     root.WebSSHManagement = api;
 }(typeof globalThis !== 'undefined' ? globalThis : this, function() {
     function managementSupported(state) {
+        if (state.isTtydMode === true) {
+            return false;
+        }
         return state.isLocalMode === true || state.isRemoteLocalMode === true;
     }
 

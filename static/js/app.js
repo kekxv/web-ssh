@@ -121,6 +121,7 @@ createApp({
             httpPollingTimer: null,
             isLocalMode: false,
             isRemoteLocalMode: false,
+            isTtydMode: false,
             showPasswordModal: false,
             passwordForm: {
                 oldPassword: '',
@@ -165,7 +166,7 @@ createApp({
         },
 
         showFileManager(show) {
-            if (show) {
+            if (show && !this.isTtydMode) {
                 this.loadFileList();
             }
         },
@@ -411,6 +412,8 @@ createApp({
             this.dockerAvailable = false;
             this.showDashboard = false;
             this.showDockerModal = false;
+            this.isRemoteLocalMode = false;
+            this.isTtydMode = false;
         },
 
         async changePassword() {
@@ -563,7 +566,7 @@ createApp({
                 }
 
                 // Auto refresh file list on Enter in remote local mode
-                if (this.isRemoteLocalMode && (data === '\r' || data === '\n')) {
+                if (this.isRemoteLocalMode && !this.isTtydMode && (data === '\r' || data === '\n')) {
                     setTimeout(() => {
                         this.loadRemoteFileList();
                     }, 300);
@@ -579,10 +582,16 @@ createApp({
         },
 
         async connect() {
+            this.isLocalMode = false;
+            this.isRemoteLocalMode = false;
+            this.isTtydMode = false;
+
             if (this.connectionMode === 'local') {
                 this.connectLocal();
             } else if (this.connectionMode === 'remoteLocal') {
-                await this.connectRemoteLocal();
+                await this.connectRemoteLocal('webssh');
+            } else if (this.connectionMode === 'ttyd') {
+                await this.connectRemoteLocal('ttyd');
             } else {
                 await this.connectSSH();
             }
@@ -833,39 +842,53 @@ createApp({
             this.loadFileList();
         },
 
-        async connectRemoteLocal() {
-            if (!this.remoteConfig.url || !this.remoteConfig.username || !this.remoteConfig.password) {
-                alert('请填写完整的远程服务器信息');
+        async connectRemoteLocal(kind) {
+            const remoteKind = kind || 'webssh';
+            const needsCredentials = remoteKind !== 'ttyd';
+            if (!this.remoteConfig.url || (needsCredentials && (!this.remoteConfig.username || !this.remoteConfig.password))) {
+                alert(needsCredentials ? '请填写完整的远程服务器信息' : '请填写 ttyd 服务器地址');
                 return;
             }
 
+            this.isTtydMode = false;
+            this.isRemoteLocalMode = false;
+
             try {
-                // 1. 登录远程 web-ssh
+                // 1. web-ssh 走登录接口；ttyd 走 /token 校验
                 const loginResponse = await fetch('/api/remote/login', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         url: this.remoteConfig.url,
                         username: this.remoteConfig.username,
-                        password: this.remoteConfig.password
+                        password: this.remoteConfig.password,
+                        kind: remoteKind
                     })
                 });
 
-                if (!loginResponse.ok) {
-                    const error = await loginResponse.json();
-                    alert('登录远程服务器失败：' + (error.error || '未知错误'));
+                const loginData = await loginResponse.json().catch(function() { return {}; });
+                if (!loginResponse.ok || !loginData.success) {
+                    alert('登录远程服务器失败：' + (loginData.error || '未知错误'));
                     return;
                 }
 
-                const loginData = await loginResponse.json();
                 this.sessionId = loginData.session_id;
-                await this.fetchRemoteAvailableShells();
-                this.isRemoteLocalMode = true;
+                this.isTtydMode = (loginData.kind || remoteKind) === 'ttyd';
+                this.isRemoteLocalMode = !this.isTtydMode;
+
+                if (this.isTtydMode) {
+                    // ttyd 只提供终端，Shell 由 ttyd 启动命令决定
+                    this.remoteAvailableShells = [];
+                    this.fileList = [];
+                    this.showFileManager = false;
+                } else {
+                    await this.fetchRemoteAvailableShells();
+                }
 
                 // 2. 连接远程终端
                 this.connectRemoteTerminal();
 
-                // 3. 加载文件列表
+                // 3. ttyd 模式不加载远程文件列表
                 this.connected = true;
                 this.currentPath = '~';
                 this.defaultPath = '~';
@@ -890,7 +913,9 @@ createApp({
                     }
                 }, 100);
 
-                this.loadRemoteFileList();
+                if (!this.isTtydMode) {
+                    this.loadRemoteFileList();
+                }
             } catch (error) {
                 alert('连接远程服务器失败：' + error.message);
             }
@@ -898,7 +923,10 @@ createApp({
 
         connectRemoteTerminal() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${window.location.host}/ws/remote/terminal?session_id=${encodeURIComponent(this.sessionId)}&shell=${encodeURIComponent(this.remoteShell)}`;
+            let wsUrl = `${protocol}//${window.location.host}/ws/remote/terminal?session_id=${encodeURIComponent(this.sessionId)}`;
+            if (!this.isTtydMode) {
+                wsUrl += `&shell=${encodeURIComponent(this.remoteShell)}`;
+            }
 
             this.ws = new WebSocket(wsUrl);
             this.ws.binaryType = 'arraybuffer';
@@ -947,7 +975,7 @@ createApp({
         },
 
         async loadRemoteFileList() {
-            if (!this.sessionId) return;
+            if (this.isTtydMode || !this.sessionId) return;
 
             try {
                 const response = await fetch(`/api/remote/file/list?session_id=${encodeURIComponent(this.sessionId)}&path=${encodeURIComponent(this.currentPath)}`);
@@ -1144,12 +1172,12 @@ createApp({
                 fetch(`/api/local/close?session_id=${encodeURIComponent(this.sessionId)}`, { method: 'POST' });
             }
 
-            // 关闭远程本地会话
-            if (this.sessionId && this.isRemoteLocalMode) {
+            // 关闭远程会话（web-ssh 远程本地 / ttyd）
+            if (this.sessionId && (this.isRemoteLocalMode || this.isTtydMode)) {
                 fetch(`/api/remote/disconnect?session_id=${encodeURIComponent(this.sessionId)}`, { method: 'POST' });
             }
 
-            if (this.sessionId && !this.useHttpFallback && !this.isRemoteLocalMode) {
+            if (this.sessionId && !this.useHttpFallback && !this.isRemoteLocalMode && !this.isTtydMode) {
                 fetch(`/api/ssh/disconnect?session_id=${this.sessionId}`, { method: 'POST' });
             }
             if (this.sftpSessionId) {
@@ -1165,6 +1193,7 @@ createApp({
             this.config.passphrase = '';
             this.useHttpFallback = false;
             this.isRemoteLocalMode = false;
+            this.isTtydMode = false;
         },
 
         // 获取默认路径（HOME）
@@ -1231,6 +1260,7 @@ createApp({
         },
 
         async loadFileList() {
+            if (this.isTtydMode) return;
             if (!this.sftpSessionId && !this.isLocalMode && !this.isRemoteLocalMode) return;
 
             // 如果是远程本地模式，使用 loadRemoteFileList

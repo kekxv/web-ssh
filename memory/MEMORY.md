@@ -13,6 +13,7 @@
 - [x] SFTP 文件管理（上传/下载/删除/新建目录）
 - [x] 本地 Bash 模式（支持 HTTP 长连接降级）
 - [x] 本地文件管理
+- [x] ttyd 终端接入（仅 Shell，支持 Basic 认证、base-path、输入/resize 帧转换）
 
 ### 安全特性
 - [x] RSA-AES 混合加密传输密码
@@ -54,7 +55,8 @@ go build -o web-ssh .
 1. 跳板机密码使用 RSA-OAEP + AES-GCM 混合加密
 2. SSH 跳板机通过 `ssh.Dial` 逐层建立隧道连接
 3. 本地模式支持 WebSocket 和 HTTP 长连接两种降级方案
-4. 前端资源使用本地 vendor 目录（Vue, xterm.js, Tailwind Play CDN 脚本）
+4. 前端资源使用本地 vendor 目录（Vue, xterm.js, 预编译 CSS；兼容 Chrome 75）
+5. ttyd 模式只代理终端，不提供文件/系统/Docker/Shell 选择能力
 
 ## 待改进项
 - [ ] 密码哈希改用 bcrypt/argon2

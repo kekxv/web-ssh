@@ -28,6 +28,12 @@
    - 登录时可选择远端实际可用的 Shell；`bash` 与 `sh` 可作为没有 `zsh` 时的回退
    - 直接 SSH 连接不显示系统信息和 Docker 管理，避免将本机状态误标为远端状态
 
+6. **ttyd 终端接入**
+   - 连接模式新增 `ttyd`，可直接连接 ttyd 服务并使用其终端
+   - 转发 web-ssh 的输入/resize 消息到 ttyd 帧协议，支持 `-c` Basic 认证与 `--base-path`
+   - 仅提供终端能力：文件管理、系统信息和 Docker 面板在 ttyd 模式下自动隐藏
+   - ttyd 默认只读，需要以 `-W` 启动才能输入
+
 ## 🚀 快速开始
 
 ### 方式一：一键安装 (推荐 Linux 用户)
@@ -58,6 +64,23 @@ go build -ldflags="-s -w" -o web-ssh .
 # 3. 运行（可选指定端口）
 ./web-ssh -port 8080
 ```
+
+## 🧪 测试
+
+```bash
+# 前端 Chrome 75 兼容性与管理能力测试
+npm test
+
+# Go 单元测试
+go test ./...
+
+# ttyd 真实服务端到端测试（需要本机有 ttyd，或用 TTYD_BIN 指定路径）
+TTYD_BIN=/usr/bin/ttyd go test ./handlers -run TestTtydIntegrationWithRealServer -v
+```
+
+ttyd 集成测试会真实启动：
+`ttyd -W -c tty:secret -b /ttyd /bin/cat`，
+并通过 web-ssh 的远程登录、WebSocket 网关完成输入与输出验证。
 
 ## 🔐 账号管理
 
